@@ -16,7 +16,7 @@
         </div>
 
         <button id="btn-open" class="btn btn-primary">Open Score</button>
-        <input id="file-input" type="file" accept=".gp,.gp3,.gp4,.gp5,.gpx,.gp7,.gp8,.musicxml,.xml,.mxl,.cap,.capx,.mid,.midi" hidden />
+        <input id="file-input" type="file" accept=".gp,.gp3,.gp4,.gp5,.gpx,.gp7,.gp8,.musicxml,.xml,.mxl,.cap,.capx" hidden />
 
         <button id="btn-chord" class="btn">🎵 Analyze Chords</button>
         <button id="btn-picker" class="btn">🎸 Chord Finder</button>
@@ -323,8 +323,8 @@
             </label>
             <label class="row">
               <span>Visible Frets</span>
-              <input id="frets" type="range" min="5" max="24" value="15" />
-              <output id="frets-out">15</output>
+              <input id="frets" type="range" min="5" max="24" value="24" />
+              <output id="frets-out">24</output>
             </label>
             <label class="row">
               <input id="toggle-fretboard" type="checkbox" checked />
@@ -348,7 +348,7 @@
               <div class="drop-inner">
                 <div class="drop-icon">♪</div>
                 <p><b>Drop a Guitar Pro file here</b></p>
-                <p class="muted small">Supports .gp3 / .gp4 / .gp5 / .gpx / .gp, MusicXML, and MIDI</p>
+                <p class="muted small">Supports Guitar Pro, MusicXML, and Capella files</p>
                 <p><button id="btn-demo" class="btn btn-sm">Load Demo Score</button></p>
               </div>
             </div>

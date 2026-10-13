@@ -221,7 +221,7 @@ function load() {
     stave: 'scoretab',
     layout: 'page',
     zoom: 100,
-    frets: 15,
+    frets: 24,
     showFretboard: true,
     speed: 100,
     metronome: false,
@@ -235,7 +235,11 @@ function load() {
     useCustomTuningForScoreNotes: true,
   };
   try {
-    const merged = { ...defaults, ...JSON.parse(localStorage.getItem('litejam-glowtab') ?? '{}') };
+    const saved = JSON.parse(localStorage.getItem('litejam-glowtab') ?? '{}');
+    const merged = { ...defaults, ...saved };
+    // The old default was 15 frets; move browsers still on it to 24 once, then respect later choices
+    if (!saved.fretsDefault24 && saved.frets === 15) merged.frets = defaults.frets;
+    merged.fretsDefault24 = true;
     if (!isValidTuning(merged.tuning)) merged.tuning = defaults.tuning;
     return merged;
   } catch {
@@ -1897,6 +1901,10 @@ on(el.off, 'click', () => {
 
 async function loadFile(file) {
   if (!file) return;
+  if (/\.(mid|midi)$/i.test(file.name)) {
+    toast('MIDI files cannot be imported. Use Guitar Pro, MusicXML, or Capella files instead.', true);
+    return;
+  }
   if (mode === 'picker') exitPickerMode('tab');
   if (mode === 'chord') exitChordMode();
   if (mode === 'stems') exitStemsMode();

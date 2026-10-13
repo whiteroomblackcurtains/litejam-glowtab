@@ -65,7 +65,7 @@ Standard tuning keeps the original behaviour: a score's own string and fret numb
 
 ## 用法
 
-1. 按「開啟譜」或把 `.gp` / `.gp3` / `.gp4` / `.gp5` / `.gpx` / MusicXML / MIDI 檔案拖進畫面。
+1. 按「開啟譜」或把 Guitar Pro（`.gp` / `.gp3` / `.gp4` / `.gp5` / `.gpx`）、MusicXML 或 Capella 檔案拖進畫面。MIDI 檔案不能匯入。
 2. 左側「音軌」選要看哪一軌。
 3. 按「連線吉他」→ 在瀏覽器的裝置清單選你的 LiteJam。連上會自動跑一次亮燈測試。
 4. 按 ▶（或空白鍵）開始。正在彈的音亮主色，下一拍亮預告色。

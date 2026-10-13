@@ -10,7 +10,7 @@ export class FretboardView {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.frets = 15; // 顯示到第幾格
+    this.frets = 24; // 顯示到第幾格
     this.orientation = 'horizontal'; // horizontal | vertical
     /** @type {Array<{leds:Array<{fret:number,strings:number[]}>, color:{r:number,g:number,b:number}}>} */
     this.groups = [];
