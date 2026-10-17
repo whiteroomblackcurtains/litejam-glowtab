@@ -84,6 +84,40 @@ export function chordTypeIntervals(id) {
   return TYPE_BY_ID.get(id)?.intervals ?? null;
 }
 
+/**
+ * In add-on mode keep the tab chord's triad and add only extension tones not
+ * already present in that triad. The note limit controls how many extra tones
+ * fit beyond the retained base triad. Full mode instead uses the selected
+ * chord type exactly as before.
+ */
+export function tabChordIntervals(baseQuality, extension, fullExtension, noteLimit = 5) {
+  const base = QUALITY_DEGREES[baseQuality] ?? QUALITY_DEGREES.maj;
+  if (!extension) return [...base];
+  if (fullExtension) return [...extension];
+
+  const triad = base.slice(0, 3);
+  const basePcs = new Set(triad.map((n) => n % 12));
+  const seen = new Set(basePcs);
+  const extras = [];
+  for (const interval of extension) {
+    const pc = ((interval % 12) + 12) % 12;
+    if (seen.has(pc)) continue;
+    seen.add(pc);
+    extras.push(pc);
+  }
+
+  const degreeRank = (pc) => {
+    if (pc === 10 || pc === 11) return 0; // seventh
+    if ([1, 2, 3].includes(pc)) return 1; // altered or natural ninth
+    if (pc === 5 || pc === 6) return 2; // eleventh
+    if ([8, 9].includes(pc)) return 3; // thirteenth / sixth
+    return 4;
+  };
+  extras.sort((a, b) => degreeRank(a) - degreeRank(b));
+  const additionalCount = Math.max(0, noteLimit - triad.length);
+  return [...triad, ...extras.slice(0, additionalCount)];
+}
+
 /** 音域有限時優先保留根音、三度／掛留音和擴展張力，五度（7）最先省略 */
 function toneRank(interval, hasThird) {
   switch (interval) {

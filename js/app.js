@@ -16,7 +16,7 @@ import {
 import { melodySummary, melodyToTex } from './solotab.js';
 import { jianpuHtml, scoreToJianpu } from './jianpu.js';
 import { VideoPlayer } from './videosync.js';
-import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionVoicings, segmentAt } from './tabchords.js';
+import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionVoicings, segmentAt, tabChordIntervals } from './tabchords.js';
 import { StemMixer } from './mixer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -73,6 +73,7 @@ const el = {
   tabChordCount: $('tab-chord-count'),
   tabChordNotes: $('tab-chord-notes'),
   tabChordType: $('tab-chord-type'),
+  tabChordFullExtension: $('tab-chord-full-extension'),
   tabChordName: $('tab-chord-name'),
   tabChordDetail: $('tab-chord-detail'),
   brightness: $('brightness'),
@@ -566,12 +567,18 @@ function showTabChord(seg) {
   const limit = Number(el.tabChordCount.value) || 5;
   const notes = Number(el.tabChordNotes.value) || 3;
   const typeId = el.tabChordType.value;
-  const intervals = typeId ? chordTypeIntervals(typeId) : seg.quality;
+  const extension = typeId ? chordTypeIntervals(typeId) : null;
+  const intervals = extension
+    ? tabChordIntervals(seg.quality, extension, el.tabChordFullExtension.checked, notes)
+    : seg.quality;
   const variants = inversionVoicings(seg.root, intervals, settings.tuning, limit, { notes });
   tabChords.variants = variants;
   fretboard.setOverlay(variants);
   resendLeds();
-  el.tabChordName.textContent = typeId ? `${seg.name.match(/^[A-G][#b]?/)[0]} ${typeId}` : seg.name;
+  const rootName = seg.name.match(/^[A-G][#b]?/)[0];
+  el.tabChordName.textContent = typeId
+    ? `${rootName} ${typeId}${el.tabChordFullExtension.checked ? '' : ' add-on'}`
+    : seg.name;
   el.tabChordDetail.replaceChildren();
   variants.forEach((v, i) => {
     const s = document.createElement('span');
@@ -613,7 +620,7 @@ function resetTabChords() {
 on(el.tabChordBtn, 'click', analyzeTabChords);
 el.tabChordType.append(new Option('Auto (from tab)', ''));
 for (const t of CHORD_TYPES) el.tabChordType.append(new Option(t.id, t.id));
-for (const sel of [el.tabChordCount, el.tabChordNotes, el.tabChordType]) {
+for (const sel of [el.tabChordCount, el.tabChordNotes, el.tabChordType, el.tabChordFullExtension]) {
   on(sel, 'change', () => {
     if (tabChords) {
       tabChords.dirty = true;

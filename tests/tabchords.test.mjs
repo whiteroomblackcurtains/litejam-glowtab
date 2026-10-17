@@ -92,3 +92,13 @@ test('four notes on a triad doubles a chord tone', () => {
   assert.ok(vs.length > 0);
   for (const v of vs) assert.equal(v.notes.length, 4);
 });
+
+test('extension add-on keeps the tab triad and adds only new extension tones', async () => {
+  const { chordTypeIntervals, tabChordIntervals } = await import('../js/tabchords.js');
+  const maj9 = chordTypeIntervals('maj9');
+  assert.deepEqual(tabChordIntervals('maj', maj9, false, 5), [0, 4, 7, 11, 2]);
+  assert.deepEqual(tabChordIntervals('maj', maj9, false, 4), [0, 4, 7, 11]);
+  assert.deepEqual(tabChordIntervals('maj', maj9, false, 3), [0, 4, 7]);
+  assert.deepEqual(tabChordIntervals('min', maj9, false, 5), [0, 3, 7, 11, 2]);
+  assert.deepEqual(tabChordIntervals('maj', maj9, true, 3), maj9);
+});
