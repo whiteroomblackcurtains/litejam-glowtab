@@ -1,7 +1,7 @@
-// 分軌混音器：把分離出來的各軌用 Web Audio 同步播放，每軌可以獨立調大小、靜音、獨奏。
+// Stem mixer: play separated tracks in sync with Web Audio; adjust each track's volume, mute, or solo independently.
 //
-// 對外的介面刻意做成和 <audio> 一樣（play / pause / paused / currentTime / duration），
-// 這樣和弦譜那邊可以把它當成另一個「音源」，不用改同步邏輯。
+// The public interface intentionally matches <audio> (play / pause / paused / currentTime / duration),
+// so the chord chart can treat it as another audio source without changing its sync logic.
 
 export class StemMixer {
   constructor() {
@@ -10,8 +10,8 @@ export class StemMixer {
     this.tracks = [];
     this.master = null;
     this.sources = [];
-    this._startedAt = 0;   // ctx.currentTime 當時的值
-    this._offset = 0;      // 從歌曲的第幾秒開始播
+    this._startedAt = 0;   // Value of ctx.currentTime at start.
+    this._offset = 0;      // Playback start position in the song, in seconds.
     this._playing = false;
     this._rate = 1;
     this.soloId = null;
@@ -47,7 +47,7 @@ export class StemMixer {
   }
 
   /**
-   * 載入各軌。
+   * Load the stems.
    * @param {Array<{id:string,label:string,url:string}>} stems
    * @param {(loaded:number,total:number)=>void} [onProgress]
    */
@@ -66,7 +66,7 @@ export class StemMixer {
     }));
 
     let done = 0;
-    // 一軌一軌載，進度才有意義（每軌都是完整長度的 wav，不小）
+    // Load stems one at a time so progress is meaningful (each full-length WAV can be large).
     for (const track of this.tracks) {
       const res = await fetch(track.url);
       if (!res.ok) throw new Error(`Failed to load ${track.label} (${res.status})`);
@@ -101,7 +101,7 @@ export class StemMixer {
     this._applyGains();
   }
 
-  /** 傳 null 取消獨奏 */
+  /** Pass null to cancel solo. */
   setSolo(id) {
     this.soloId = this.soloId === id ? null : id;
     this._applyGains();
@@ -122,7 +122,7 @@ export class StemMixer {
 
   _startSources() {
     this.sources = [];
-    const when = this.ctx.currentTime + 0.02; // 一點點前置，確保各軌同時開始
+    const when = this.ctx.currentTime + 0.02; // Start slightly in the future so all stems begin together.
     for (const t of this.tracks) {
       if (!t.buffer) continue;
       const src = this.ctx.createBufferSource();
@@ -141,7 +141,7 @@ export class StemMixer {
       try {
         s.stop();
       } catch {
-        /* 已經停了 */
+        /* Already stopped. */
       }
       s.disconnect();
     }
@@ -165,8 +165,8 @@ export class StemMixer {
   }
 
   /**
-   * 依目前的音量／靜音／獨奏設定，離線算出一個混好的立體聲 AudioBuffer。
-   * 給「匯出我的混音」用。
+   * Render a stereo AudioBuffer offline using the current volume, mute, and solo settings.
+   * Used by "Export My Mix".
    */
   async renderMix() {
     if (!this.ready) throw new Error('Stem tracks have not finished loading.');

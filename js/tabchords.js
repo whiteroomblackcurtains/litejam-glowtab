@@ -1,5 +1,5 @@
-// 從目前載入的指法譜（tab）分析和弦，並產生各轉位的指型。
-// 純運算、不碰 DOM，方便測試。string 編號用吉他慣例：1 = 細弦。
+// Analyze chords from the currently loaded tab and generate voicings for each inversion.
+// Pure computation; does not touch the DOM, so it is easy to test. String numbering follows guitar convention: 1 = high E.
 
 import { QUALITY_DEGREES, chordName } from './chords.js';
 
@@ -11,7 +11,7 @@ const NAMES = {
   4: '4th inversion',
 };
 
-/** 各轉位指型的顏色（依沿琴頸由低到高的順序），與被共用的音（粉紅） */
+/** Colors for inversion voicings (ordered from low to high along the fretboard), and for shared notes (pink). */
 export const VARIANT_COLORS = [
   { name: 'light green', hex: '#8ff7a0', text: '#04210f' },
   { name: 'light orange', hex: '#ffc58a', text: '#2b1500' },
@@ -22,8 +22,8 @@ export const VARIANT_COLORS = [
 export const SHARED_COLOR = { name: 'pink', hex: '#ff6ec7', text: '#2b0020' };
 
 /**
- * 可選的和弦類型（音程 = 離根音的半音數，>12 表示高八度的延伸音）。
- * 13 和弦照慣例省略 11 音。
+ * Available chord types (interval = semitones from the root; >12 indicates an extension above the octave).
+ * As is conventional, 13th chords omit the 11th.
  */
 const T = (id, intervals) => ({ id, intervals });
 export const CHORD_TYPES = [
@@ -118,12 +118,12 @@ export function tabChordIntervals(baseQuality, extension, fullExtension, noteLim
   return [...triad, ...extras.slice(0, additionalCount)];
 }
 
-/** 音域有限時優先保留根音、三度／掛留音和擴展張力，五度（7）最先省略 */
+/** When the range is limited, prioritize the root, third/suspended tone, and extension tensions; omit the fifth (7) first. */
 function toneRank(interval, hasThird) {
   switch (interval) {
     case 0: return 0;
     case 3: case 4: return 1;
-    case 2: case 5: return hasThird ? 5 : 1; // 沒有三度時 sus 音就是和弦特徵
+    case 2: case 5: return hasThird ? 5 : 1; // Without a third, the suspended tone defines the chord.
     case 6: case 8: return 2;
     case 13: case 15: case 18: return 2.2;
     case 21: return 2.2;
@@ -135,7 +135,7 @@ function toneRank(interval, hasThird) {
   }
 }
 
-/** 挑出最多 count 個音，優先保留根音、三度／掛留音和選定的延伸音 */
+/** Pick at most count tones, prioritizing the root, third/suspended tone, and selected extensions. */
 export function pickTones(intervals, count) {
   if (intervals.length <= count) return [...intervals];
   const hasThird = intervals.some((i) => i === 3 || i === 4);
@@ -145,13 +145,13 @@ export function pickTones(intervals, count) {
     .sort((a, b) => a - b);
 }
 
-// 辨識用的和弦種類；越前面越優先（分數相同時）
+// Chord qualities used for recognition; earlier entries have priority when scores tie.
 const QUALITIES = ['maj', 'min', '7', 'm7', 'maj7', 'sus4', 'sus2', 'dim', 'aug', '5'];
 
 /**
- * 一組音（pitch class → 權重）找最像的和弦。
+ * Find the chord that best matches a set of tones (pitch class → weight).
  * @param {Map<number, number>} weights
- * @param {number|null} bassPc 最低音，用來加分「根音在低音」
+ * @param {number|null} bassPc Lowest note, used to reward chords with the root in the bass.
  * @returns {{root:number, quality:string, name:string, score:number}|null}
  */
 export function detectChord(weights, bassPc = null) {
@@ -166,7 +166,7 @@ export function detectChord(weights, bassPc = null) {
       let hit = 0;
       for (const [pc, w] of weights) if (set.has(pc)) hit += w;
       const covered = tones.filter((t) => weights.has(t)).length;
-      // 缺根音或缺三度/五度的扣分；多出來的外音由 hit/total 扣掉
+      // Penalize a missing root or third/fifth; extra non-chord tones are accounted for by hit/total.
       if (!weights.has(root)) continue;
       const score =
         (hit / total) * 0.6 +
@@ -181,8 +181,8 @@ export function detectChord(weights, bassPc = null) {
 }
 
 /**
- * 掃描一個音軌，回傳依時間排序的和弦段落。
- * 一小節一個和弦；如果整小節湊不出和弦，就對半切再試一次。
+ * Scan a track and return chord segments ordered by time.
+ * Try one chord per bar; if no chord is found for a whole bar, split it in half and try again.
  * @param {object} track alphaTab Track
  * @returns {Array<{start:number,end:number,bar:number,name:string,root:number,quality:string}>}
  */
@@ -224,7 +224,7 @@ export function analyzeTrack(track) {
     }
   }
 
-  // 相鄰且同名的段落合併，播放時畫面不會一直閃
+  // Merge adjacent segments with the same name to prevent the display from flickering during playback.
   const merged = [];
   for (const s of segments) {
     const prev = merged[merged.length - 1];
@@ -250,21 +250,23 @@ function detectInWindow(events, from, to) {
   return found ? { name: found.name, root: found.root, quality: found.quality } : null;
 }
 
-/** 目前播放位置（tick）落在哪個和弦段落 */
+/** Find the chord segment containing the current playback position (tick). */
 export function segmentAt(segments, tick) {
   return segments.find((s) => tick >= s.start && tick < s.end) ?? null;
 }
 
 /**
- * 產生這個和弦的各轉位指型。
- * 指型沿著琴頸（前 12 格內）由低把位往高把位排開，盡量輪流用不同轉位、
- * 不同的最低弦（根音可在任何一條弦）。顏色綠／橘交替，相鄰指型不會同色。
+ * Generate voicings for each inversion of this chord.
+ * Arrange voicings along the fretboard (within the first 12 frets) from lower to higher positions,
+ * alternating inversions and bass strings where possible (the root may be on any string).
+ * Colors alternate between green and orange, so adjacent voicings have different colors.
  * @param {number} root pitch class
- * @param {string|number[]} quality 辨識出的種類（如 'maj'）或音程陣列
- * @param {number[]} tuning 第1弦→第6弦的 MIDI
- * @param {number} limit 最多幾個（1–5）
- * @param {{notes?:number, maxFret?:number}} opts notes = 每個指型幾條弦（3–5）；
- *   和弦音比弦少時重複音（例如加倍根音），比弦多時依重要性省略（先省五度）
+ * @param {string|number[]} quality Recognized quality (such as 'maj') or an interval array.
+ * @param {number[]} tuning MIDI notes for strings 1 through 6.
+ * @param {number} limit Maximum number of voicings (1–5).
+ * @param {{notes?:number, maxFret?:number}} opts notes = number of strings per voicing (3–5);
+ *   repeat tones (for example, double the root) when there are fewer chord tones than strings,
+ *   or omit tones by importance (the fifth first) when there are more.
  * @returns {Array<{inversion:number,label:string,bass:number,frets:Array<number|null>,notes:Array<{string:number,fret:number}>}>}
  */
 export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
@@ -273,7 +275,7 @@ export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
   const chosen = opts.notes ? pickTones(degrees, opts.notes) : pickTones(degrees, 5);
   const tones = chosen.map((d) => (root + d) % 12);
   const size = opts.notes ? Math.min(6, Math.max(opts.notes, 2)) : tones.length;
-  // 音靠得很近的和弦（如 madd9）在標準指距內可能湊不出來，就逐步放寬指距
+  // Chords with closely spaced tones (such as madd9) may not fit a standard hand span, so gradually widen the span.
   let pool = [];
   for (let span = size >= 5 ? 4 : 3; span <= 6 && !pool.length; span++) {
     pool = allShapes(tones, tuning, maxFret, size, span);
@@ -281,7 +283,7 @@ export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
   if (!pool.length) return [];
 
   const out = [];
-  const taken = new Set(); // 已被前面指型佔用的 string:fret
+  const taken = new Set(); // string:fret positions already used by earlier voicings
   const usedInv = new Set();
   const usedSets = new Set();
   let prevMin = -1;
@@ -289,7 +291,7 @@ export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
   const key = (s, f) => `${s}:${f}`;
 
   for (let i = 0; i < limit; i++) {
-    // 目標把位沿著琴頸由低到高均勻分佈（0 … maxFret-3）
+    // Distribute target positions evenly from low to high along the fretboard (0 … maxFret-3).
     const target = limit === 1 ? 0 : (i * span) / (limit - 1);
     let best = null;
     for (const c of pool) {
@@ -318,7 +320,7 @@ export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
     });
   }
 
-  // 同一個位置被兩個以上的指型共用 → 該音一律標成粉紅色
+  // If two or more voicings share a position, mark that note pink in all of them.
   const count = new Map();
   for (const v of out) for (const n of v.notes) count.set(key(n.string, n.fret), (count.get(key(n.string, n.fret)) ?? 0) + 1);
   for (const v of out) for (const n of v.notes) n.shared = count.get(key(n.string, n.fret)) > 1;
@@ -326,9 +328,9 @@ export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
 }
 
 /**
- * 列出所有緊湊指型：相鄰 2／3／4 條弦（五度和弦 2 條、三和弦 3 條、七和弦 4 條），
- * 湊齊全部和弦音、手指跨度 ≤ 3 格、全在 maxFret 之內。
- * 最低弦的音決定是第幾轉位，所以根音可以落在六條弦的任何一條。
+ * List all compact voicings using 2/3/4 adjacent strings (2 for power chords, 3 for triads, 4 for seventh chords),
+ * containing every chord tone, with a finger span of at most 3 frets, and within maxFret.
+ * The note on the lowest string determines the inversion, so the root may be on any of the six strings.
  */
 function allShapes(tones, tuning, maxFret, size, maxSpan) {
   const toneSet = new Set(tones);
@@ -351,7 +353,7 @@ function allShapes(tones, tuning, maxFret, size, maxSpan) {
         const lo = fretted.length ? Math.min(...fretted) : 0;
         const hi = fretted.length ? Math.max(...fretted) : 0;
         if (hi - lo > maxSpan) return;
-        // 開放弦只在低把位才算同一個把位，免得高把位混進開放弦
+        // Treat open strings as part of the same position only in low positions, to avoid mixing them into high positions.
         if (used.includes(0) && hi > maxSpan + 1) return;
         const bassPc = (tuning[low - 1] + frets[low - 1]) % 12;
         out.push({
@@ -359,7 +361,7 @@ function allShapes(tones, tuning, maxFret, size, maxSpan) {
           lowString: low,
           frets: frets.slice(),
           minFret: lo,
-          // 重複的音（和弦音比弦少時）稍微扣分，讓不重複的指型優先
+          // Slightly penalize repeated tones (when there are fewer chord tones than strings) to favor voicings without repeats.
           cost: (hi - lo) * 2 - used.filter((f) => f === 0).length * 0.3 + (size - pcs.size) * 0.5,
         });
         return;

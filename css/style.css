@@ -7,8 +7,8 @@
   --muted: #8a90a2;
   --accent: #00e5ff;
   --accent-2: #ff2d95;
-  --major: #5aa9ff; /* 大調 */
-  --minor: #ff5d6c; /* 小調 */
+  --major: #5aa9ff; /* Major key */
+  --minor: #ff5d6c; /* Minor key */
   --ok: #2ee88f;
   --warn: #ffb02e;
   --radius: 10px;
@@ -18,7 +18,7 @@
   box-sizing: border-box;
 }
 
-/* 有些元素下面用了 display:grid/flex，會蓋掉 hidden 屬性的預設值 */
+/* Some elements use display: grid/flex, which overrides the default hidden behavior. */
 [hidden] {
   display: none !important;
 }
@@ -47,7 +47,7 @@ body {
   height: 100%;
 }
 
-/* ---------- 上方列 ---------- */
+/* ---------- Top bar ---------- */
 
 .topbar {
   display: flex;
@@ -106,7 +106,7 @@ body {
   font-size: 12px;
 }
 
-/* ---------- 按鈕 ---------- */
+/* ---------- Buttons ---------- */
 
 .btn {
   appearance: none;
@@ -168,7 +168,7 @@ body {
   box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.25);
 }
 
-/* ---------- 藍牙狀態 ---------- */
+/* ---------- Bluetooth status ---------- */
 
 .chip {
   display: flex;
@@ -211,17 +211,18 @@ body {
   }
 }
 
-/* ---------- 主體 ---------- */
+/* ---------- Main layout ---------- */
 
 .main {
-  position: relative; /* 窄畫面時側邊面板要相對這裡絕對定位 */
+  position: relative; /* The side panel is positioned relative to this on narrow screens. */
   display: grid;
   grid-template-columns: 320px 1fr;
   min-height: 0;
 }
 
-/* 面板收起時整欄拿掉；如果只設 0px，被隱藏的 aside 會離開格線流，
-   讓 .stage 掉到第一欄（寬度 0）而整個消失。 */
+/* Remove the entire column when the panel is collapsed. If set to 0px, the hidden
+   aside leaves the grid flow and .stage moves into the zero-width first column,
+   disappearing completely. */
 body.no-panel .main {
   grid-template-columns: 1fr;
 }
@@ -397,7 +398,7 @@ input[type="checkbox"] {
   padding: 1px 4px;
 }
 
-/* ---------- 樂譜區 ---------- */
+/* ---------- Score area ---------- */
 
 .stage {
   display: grid;
@@ -444,8 +445,8 @@ input[type="checkbox"] {
   color: var(--fg);
   text-align: center;
   pointer-events: none;
-  /* alphaTab 會在 #alphatab 裡自己插入容器 div，沒有 z-index 的話
-     那些 div 會蓋在提示層上面，「載入範例譜」就按不到 */
+  /* alphaTab inserts its own container divs into #alphatab. Without a z-index,
+     those divs cover the hint overlay and prevent clicking "Load sample score." */
   z-index: 4;
 }
 
@@ -471,7 +472,7 @@ input[type="checkbox"] {
   margin-bottom: 4px;
 }
 
-/* ---------- 指板 ---------- */
+/* ---------- Fretboard ---------- */
 
 .fretboard-wrap {
   position: relative;
@@ -499,7 +500,7 @@ input[type="checkbox"] {
   padding: 3px 2px 0;
 }
 
-/* ---------- 播放列 ---------- */
+/* ---------- Transport controls ---------- */
 
 .transport {
   display: flex;
@@ -545,7 +546,7 @@ input[type="checkbox"] {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- IG 直式 9:16 ---------- */
+/* ---------- IG portrait 9:16 ---------- */
 
 body.ig .main {
   grid-template-columns: 1fr;
@@ -565,7 +566,8 @@ body.ig .stage {
   box-shadow: 0 0 60px rgba(0, 229, 255, 0.07);
 }
 
-/* 直式時指板改成填滿下半部，不用固定高度，才不會被切掉 */
+/* In portrait mode, let the fretboard fill the lower half without a fixed height
+   so it does not get clipped. */
 body.ig .fretboard-wrap {
   display: flex;
   flex-direction: column;
@@ -586,7 +588,7 @@ body.ig .fretboard-wrap {
   padding: 10px;
 }
 
-/* ---------- 乾淨畫面（錄影用） ---------- */
+/* ---------- Clean view (for recording) ---------- */
 
 body.clean .topbar,
 body.clean .transport,
@@ -607,7 +609,7 @@ body.clean .main {
   grid-template-columns: 1fr;
 }
 
-/* ---------- 和弦譜 ---------- */
+/* ---------- Chord chart ---------- */
 
 .cc-viewport {
   background: #0d0f14;
@@ -708,7 +710,7 @@ body.clean .main {
   font-family: -apple-system, system-ui, sans-serif;
 }
 
-/* 段落快速跳 */
+/* Quick section navigation */
 .cc-sections {
   display: flex;
   flex-wrap: wrap;
@@ -796,7 +798,7 @@ body.clean .main {
   box-shadow: 0 0 18px rgba(0, 229, 255, 0.12);
 }
 
-/* 選段循環的範圍 */
+/* Selected section loop range */
 .cc-bar.in-loop {
   background: rgba(255, 45, 149, 0.08);
   border-color: rgba(255, 45, 149, 0.4);
@@ -862,7 +864,7 @@ body.clean .main {
   font-weight: 400;
 }
 
-/* 大調藍、小調紅 */
+/* Major keys are blue; minor keys are red. */
 .cc-slot.q-major {
   color: var(--major);
 }
@@ -895,7 +897,7 @@ body.clean .main {
   background: rgba(255, 93, 108, 0.16);
 }
 
-/* 和弦圖的名稱也跟著上色 */
+/* Color chord diagram names to match as well. */
 .cc-dia.q-major .dia-name,
 .pk-name.q-major {
   fill: var(--major);
@@ -953,7 +955,7 @@ body.ig .cc-diagrams {
   display: none;
 }
 
-/* ---------- 數字簡譜 ---------- */
+/* ---------- Numbered notation ---------- */
 
 .jianpu-wrap {
   border-top: 1px solid var(--line);
@@ -996,8 +998,9 @@ body.ig .cc-diagrams {
   margin-right: 10px;
 }
 
-/* 數字 + 八度點，點要疊在數字上下，所以用相對定位。
-   每格給一致的最小寬度（≈ 一拍），長音的延長線也一樣寬，排起來才工整。 */
+/* The octave dots stack above or below the number, so use relative positioning.
+   Give each cell a consistent minimum width (about one beat), and make sustained
+   note extender lines the same width for a tidy layout. */
 .jp-cell {
   position: relative;
   display: inline-block;
@@ -1005,7 +1008,8 @@ body.ig .cc-diagrams {
   text-align: center;
 }
 
-/* 八分／十六分是半拍以下，給窄一點，密集的地方才不會撐太寬 */
+/* Eighth and sixteenth notes are shorter than half a beat; make them narrower
+   so dense passages do not spread too wide. */
 .jp-cell.jp-u1 {
   min-width: 1em;
 }
@@ -1014,7 +1018,8 @@ body.ig .cc-diagrams {
   min-width: 0.85em;
 }
 
-/* 長音延長線：和音符一樣寬、置中，全音符 = 「1 - - -」剛好四拍寬 */
+/* Sustained-note extender lines match the note width and are centered. A whole
+   note ("1 - - -") is exactly four beats wide. */
 .jp-dash {
   display: inline-block;
   min-width: 1.35em;
@@ -1048,7 +1053,7 @@ body.ig .cc-diagrams {
   color: #5c6274;
 }
 
-/* 八分／十六分的底線 */
+/* Eighth- and sixteenth-note underlines */
 .jp-u1 .jp-num {
   border-bottom: 1px solid var(--muted);
 }
@@ -1062,7 +1067,7 @@ body.ig .cc-diagrams {
   box-shadow: 0 4px 0 -3px var(--muted);
 }
 
-/* ---------- 分軌混音 ---------- */
+/* ---------- Stem mixer ---------- */
 
 .mixer {
   display: flex;
@@ -1122,7 +1127,7 @@ body.ig .cc-diagrams {
   color: #1f1405;
 }
 
-/* ---------- YouTube 影片（可拖動、可縮放的浮動視窗） ---------- */
+/* ---------- YouTube video (draggable, resizable floating window) ---------- */
 
 .video-wrap {
   position: fixed;
@@ -1142,7 +1147,8 @@ body.ig .cc-diagrams {
   max-width: 96vw;
 }
 
-/* 拖曳時暫時關掉 iframe 的滑鼠事件，不然指標一進到影片就抓不到 mousemove */
+/* Temporarily disable iframe mouse events while dragging; otherwise, moving over
+   the video prevents us from receiving mousemove events. */
 .video-wrap.dragging #video-host {
   pointer-events: none;
 }
@@ -1179,7 +1185,7 @@ body.ig .cc-diagrams {
   display: block;
 }
 
-/* 右下角縮放把手 */
+/* Bottom-right resize handle */
 .video-resize {
   position: absolute;
   right: 0;
@@ -1196,12 +1202,12 @@ body.ig .cc-diagrams {
   opacity: 1;
 }
 
-/* 直式模式下不要蓋到譜，預設縮小一點 */
+/* Default to a smaller size in portrait mode so it does not cover the score. */
 body.ig .video-wrap {
   width: 240px;
 }
 
-/* ---------- 歌詞 ---------- */
+/* ---------- Lyrics ---------- */
 
 .cc-lyric {
   display: flex;
@@ -1258,10 +1264,10 @@ body.ig .video-wrap {
   font-size: 12px;
 }
 
-/* ---------- 手動修和弦 ---------- */
+/* ---------- Manual chord editing ---------- */
 
 .chordchart {
-  position: relative; /* 編輯小面板要相對這裡定位 */
+  position: relative; /* Position the small editing panel relative to this element. */
 }
 
 .chordchart.editing .cc-bar {
@@ -1280,7 +1286,7 @@ body.ig .video-wrap {
   background: rgba(0, 229, 255, 0.1);
 }
 
-/* 改過的和弦下面點一個記號 */
+/* Add a mark below edited chords. */
 .cc-slot.is-edited {
   position: relative;
 }
@@ -1372,7 +1378,7 @@ body.ig .video-wrap {
   gap: 6px;
 }
 
-/* ---------- 和弦盤 ---------- */
+/* ---------- Chord wheel ---------- */
 
 .pk-viewport {
   background: #0d0f14;
@@ -1628,7 +1634,7 @@ body.ig .chordpicker {
   padding: 12px;
 }
 
-/* ---------- 抓和弦對話框 ---------- */
+/* ---------- Chord detection dialog ---------- */
 
 .modal {
   position: fixed;
@@ -1744,7 +1750,7 @@ body.ig .chordpicker {
   padding-top: 12px;
 }
 
-/* 搜尋結果清單 */
+/* Search results list */
 .field input[type="search"] {
   flex: 1;
   min-width: 0;
@@ -1858,7 +1864,7 @@ body.ig .chordpicker {
   background: rgba(0, 229, 255, 0.04);
 }
 
-/* 工作進行中只留進度，來源分頁與選項先收起來 */
+/* While a job is running, show only progress and hide the source tabs and options. */
 .modal-card.running .modal-tabs,
 .modal-card.running .modal-body {
   display: none;
@@ -1882,13 +1888,13 @@ body.ig .chordpicker {
   margin: 7px 0 0;
 }
 
-/* 和弦模式下不能用的按鈕 */
+/* Buttons unavailable in chord mode */
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-/* ---------- 提示 ---------- */
+/* ---------- Toast notifications ---------- */
 
 .toast {
   position: fixed;
@@ -1941,7 +1947,7 @@ body.ig .chordpicker {
 }
 
 @media (max-width: 900px) {
-  /* 窄畫面時側邊面板改成覆蓋在樂譜上，不擠壓譜面寬度 */
+  /* On narrow screens, overlay the side panel on the score instead of shrinking it. */
   .main {
     grid-template-columns: 1fr;
   }

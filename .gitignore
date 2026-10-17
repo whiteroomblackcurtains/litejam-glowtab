@@ -1,7 +1,7 @@
-# 下載／上傳／分軌出來的音檔：有版權而且很大（2GB+），不上傳
+# Downloaded/uploaded/stem-separated audio: copyrighted and very large (2GB+); do not upload.
 media/
 
-# 系統與本機開發設定
+# System and local development settings
 .DS_Store
 .claude/
 __pycache__/

@@ -1,15 +1,16 @@
-// 和弦名稱 → 吉他按法。給 LED 亮燈與螢幕上的和弦圖共用。
+// Chord names → guitar fingerings. Shared by the LED display and on-screen chord diagrams.
 //
-// 常見的開放和弦用查表（就是大家教的那幾個按法），其餘一律用搜尋：
-// 在 4 格範圍內找出「涵蓋所有和弦音、不含非和弦音、根音在最低聲部、手指數合理」
-// 的組合，再按好按程度排序。這樣任何調、任何和弦品質都有按法，不用維護大表。
+// Common open chords use a lookup table (the familiar beginner shapes); all others are found by search:
+// within a four-fret span, find combinations that "cover every chord tone, include no non-chord tones,
+// put the root in the bass, and use a reasonable number of fingers," then sort by playability.
+// This provides fingerings for any key and chord quality without maintaining a huge table.
 
 import { STANDARD_TUNING, sameTuning } from './tuning.js';
 
 const PITCH_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const PITCH_FLAT = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 
-// 目前調弦，index 0 = 第1弦（細）。預設標準調弦，可用 setTuning() 換掉
+// Current tuning; index 0 = first (thinnest) string. Defaults to standard tuning; setTuning() can change it.
 let TUNING = [...STANDARD_TUNING]; // E4 B3 G3 D3 A2 E2
 let standardTuning = true;
 
@@ -39,7 +40,7 @@ const SUFFIX_TO_QUALITY = [
   ['', 'maj'],
 ];
 
-/** 音名（含升降）→ 音級，例如 'F#' → 6 */
+/** Note name (including sharps/flats) → pitch class, e.g. 'F#' → 6 */
 function noteToPc(letter, accidental) {
   let pc = PITCH_SHARP.indexOf(letter);
   if (pc < 0) return null;
@@ -52,8 +53,8 @@ function noteToPc(letter, accidental) {
  * 「Am7」→ {root: 9, quality: 'm7', suffix: 'm7', bass: null}
  * 「Bm/F#」→ {root: 11, quality: 'min', suffix: 'm', bass: 6}
  *
- * 斜線後面的低音一定要先切掉再判斷品質，不然 'm/F#' 對不到任何後綴，
- * 會被當成大三和弦——顏色會變藍色、指板還會亮出大三和弦的指型。
+ * Always strip the bass note after the slash before determining chord quality; otherwise 'm/F#' matches no suffix
+ * and is treated as a major triad—the color turns blue and the fretboard shows a major-triad shape.
  */
 export function parseChord(name) {
   if (!name || name === 'N.C.') return null;
@@ -85,8 +86,8 @@ export function chordName(root, quality, useFlats = false) {
 }
 
 /**
- * 這個和弦算大調還是小調（用來決定顯示顏色）。
- * 判準就是有沒有小三度：min / m7 / dim 算小調，其餘算大調。
+ * Whether this chord is major or minor (used to choose its display color).
+ * The criterion is whether it has a minor third: min / m7 / dim count as minor; everything else counts as major.
  * @returns {'major'|'minor'}
  */
 export function chordColorClass(name) {
@@ -95,10 +96,10 @@ export function chordColorClass(name) {
   return ['min', 'm7', 'dim'].includes(parsed.quality) ? 'minor' : 'major';
 }
 
-// 級數譜用：半音距離 → 級數寫法（用大調音階拼法，非音階內的音加降記號）
+// For scale-degree charts: semitone distance → scale-degree notation (spell using the major scale, with flats for out-of-scale notes)
 const DEGREE_BY_INTERVAL = ['1', 'b2', '2', 'b3', '3', '4', 'b5', '5', 'b6', '6', 'b7', '7'];
 
-// 級數譜的和弦後綴（七和弦用上標，比 "57" 好讀）
+// Chord suffixes for scale-degree charts (superscripts for sevenths are easier to read than "57")
 const DEGREE_SUFFIX = {
   maj: '',
   min: 'm',
@@ -113,9 +114,9 @@ const DEGREE_SUFFIX = {
 };
 
 /**
- * 和弦名 → 級數。例如 C 大調裡 Am → 6m、G7 → 5⁷。
- * @param {string} name 和弦名
- * @param {number} keyRoot 調的根音（0 = C）
+ * Chord name → scale degree. For example, in C major, Am → 6m and G7 → 5⁷.
+ * @param {string} name Chord name
+ * @param {number} keyRoot Key root (0 = C)
  */
 export function degreeName(name, keyRoot) {
   if (!name || name === 'N.C.') return name;
@@ -123,7 +124,7 @@ export function degreeName(name, keyRoot) {
   if (!parsed) return name;
   const interval = (((parsed.root - keyRoot) % 12) + 12) % 12;
   const suffix = DEGREE_SUFFIX[parsed.quality] ?? parsed.suffix;
-  // 轉位的低音也寫成級數，例如 C 大調的 G/B → 5/7
+  // Express an inversion's bass note as a scale degree too, e.g. G/B → 5/7 in C major
   let slash = '';
   if (parsed.bass !== null && parsed.bass !== undefined) {
     const bassInterval = (((parsed.bass - keyRoot) % 12) + 12) % 12;
@@ -132,7 +133,7 @@ export function degreeName(name, keyRoot) {
   return DEGREE_BY_INTERVAL[interval] + suffix + slash;
 }
 
-/** 移調：把和弦名稱升降 n 個半音（斜線低音也要一起移） */
+/** Transpose a chord name by n semitones (also transpose the bass note after a slash) */
 export function transposeName(name, semitones, useFlats = false) {
   if (!name || name === 'N.C.') return name;
   const parsed = parseChord(name);
@@ -146,9 +147,8 @@ export function transposeName(name, semitones, useFlats = false) {
   return names[root] + parsed.suffix + slash;
 }
 
-// ---------------------------------------------------------------- 開放和弦
-
-// frets 由第1弦排到第6弦，null = 不彈
+// ---------------------------------------------------------------- Open chords
+// frets run from the first string to the sixth; null = do not play
 const OPEN_SHAPES = {
   C: [0, 1, 0, 2, 3, null],
   D: [2, 3, 2, 0, null, null],
@@ -186,41 +186,41 @@ const OPEN_SHAPES = {
   Csus4: [1, 1, 0, 3, 3, null],
 };
 
-// ---------------------------------------------------------------- 搜尋按法
+// ---------------------------------------------------------------- Fingering search
 
 function pitchClass(string, fret) {
   return (TUNING[string - 1] + fret) % 12;
 }
 
 /**
- * 搜尋一個和弦的按法。
+ * Search for a fingering for a chord.
  * @returns {{frets: Array<number|null>, fingers: number, base: number} | null}
- *   frets[0] 是第1弦…frets[5] 是第6弦，null 代表不彈
+ *   frets[0] is the first string … frets[5] is the sixth string; null means do not play
  */
 function searchVoicing(root, quality) {
-  // 先強制根音在最低聲部（教學上按法要能一眼看出根音）。
-  // 真的找不到才放寬，避免回傳 null。
+  // First require the root to be the lowest note (the fingering should make the root obvious for teaching).
+  // Relax this only if no match is found, to avoid returning null.
   return searchVoicingInner(root, quality, true) ?? searchVoicingInner(root, quality, false);
 }
 
 /**
- * 同一個和弦在整條琴頸上、每個把位各挑一個最好按的指型。
+ * Pick the easiest fingering for a chord at each position along the entire neck.
  * @returns {Array<{frets: Array<number|null>, base: number, fingers: number, barre: boolean}>}
  */
 function searchAllPositions(root, quality, maxFret = 12) {
-  // 每個「掃描把位」各挑一個最好按的。
+  // Pick the easiest fingering in each "scanned position."
   //
-  // 注意要用掃描的 base 當 key，不能用算出來的 minFretted：
-  // base 0 那次掃描可能找到含開放弦、但最低按壓格是 2 的指型，
-  // 若和 base 2 的掃描結果撞 key，標準大橫按就會被淘汰掉
-  // （F#m 的 244222 就是這樣不見的）。
+  // Use the scanned base as the key, not the calculated minFretted:
+  // the scan at base 0 may find a shape with open strings but a lowest fretted note at fret 2;
+  // if its key collides with the base 2 scan, a standard barre chord is discarded
+  // (this is how F#m 244222 used to disappear).
   const results = [];
   for (let base = 0; base <= maxFret; base++) {
     const best = searchVoicingInner(root, quality, true, base, base);
     if (best) results.push(best);
   }
 
-  // 同一組按法會在相鄰把位重複找到，用指型內容去重
+  // The same fingering may be found at adjacent positions; deduplicate by shape
   const seen = new Set();
   return results
     .sort((a, b) => a.base - b.base)
@@ -240,12 +240,12 @@ function searchVoicingInner(root, quality, requireRootInBass, baseFrom = 0, base
   let best = null;
 
   for (let base = baseFrom; base <= baseTo; base++) {
-    // 每條弦的候選：開放弦、base..base+3、不彈
+    // Candidates per string: open, base..base+3, or muted
     const options = [];
     for (let s = 1; s <= 6; s++) {
       const opts = [null];
-      // 低把位才用開放弦。高把位混開放弦會生出 [0,13,0,10,x,x] 這種
-      // 理論上按得到、實際上沒人這樣彈的東西。
+      // Use open strings only in low positions. Combining them with high-position frets produces shapes like [0,13,0,10,x,x],
+      // which are theoretically playable but no one would actually play.
       const lo = base === 0 ? 0 : base;
       for (let f = lo; f <= base + 3; f++) {
         if (f === 0 && base !== 0) continue;
@@ -254,7 +254,7 @@ function searchVoicingInner(root, quality, requireRootInBass, baseFrom = 0, base
       options.push(opts);
     }
 
-    // 六條弦全排列，但候選很少（通常 2–4 個），實際組合數不大
+    // Try all combinations across six strings, but there are few candidates (usually 2–4), so the total is manageable
     const frets = new Array(6).fill(null);
     const walk = (i) => {
       if (i === 6) {
@@ -272,21 +272,21 @@ function searchVoicingInner(root, quality, requireRootInBass, baseFrom = 0, base
     };
     walk(0);
 
-    if (best && best.base <= 3 && best.score > 0.8) break; // 已經找到很好按的低把位
+    if (best && best.base <= 3 && best.score > 0.8) break; // A very playable low-position fingering has been found
   }
 
   return best;
 }
 
 function evaluate(frets, root, needed, base) {
-  // frets[0] = 第1弦 … frets[5] = 第6弦
+  // frets[0] = first string … frets[5] = sixth string
   const sounding = [];
   for (let i = 0; i < 6; i++) {
     if (frets[i] !== null) sounding.push({ string: i + 1, fret: frets[i] });
   }
   if (sounding.length < 3) return null;
 
-  // 不彈的弦只能在低音端連續（第6弦往上），中間空一格勉強可以
+  // Muted strings must be consecutive from the bass end (starting at the sixth string); one gap in the middle is barely acceptable
   let muteRun = 0;
   for (let i = 5; i >= 0; i--) {
     if (frets[i] === null) muteRun++;
@@ -298,15 +298,15 @@ function evaluate(frets, root, needed, base) {
   const covered = new Set(sounding.map((n) => pitchClass(n.string, n.fret)));
   for (const pc of needed) if (!covered.has(pc)) return null;
 
-  // 最低音要是根音，否則扣分。標準調弦沿用「第6弦就是低音」的慣例；
-  // 自訂調弦時第6弦不一定最低，改看實際音高。
+  // Penalize shapes whose lowest note is not the root. In standard tuning, the sixth string is assumed to be the bass;
+  // with custom tuning, check the actual pitch because the sixth string may not be the lowest.
   const pitchOf = (n) => TUNING[n.string - 1] + n.fret;
   const lowest = standardTuning
     ? sounding.reduce((a, b) => (a.string > b.string ? a : b))
     : sounding.reduce((a, b) => (pitchOf(b) < pitchOf(a) ? b : a));
   const rootInBass = pitchClass(lowest.string, lowest.fret) === root;
 
-  // 手指數：同一格跨多弦算一根（大橫按）
+  // Finger count: pressing multiple strings at the same fret counts as one (a barre)
   const fretted = sounding.filter((n) => n.fret > 0);
   const byFret = new Map();
   for (const n of fretted) byFret.set(n.fret, (byFret.get(n.fret) ?? 0) + 1);
@@ -330,11 +330,11 @@ function evaluate(frets, root, needed, base) {
   return { frets, fingers, base: minFretted, score, rootInBass };
 }
 
-// ---------------------------------------------------------------- 對外
+// ---------------------------------------------------------------- Public API
 
 const cache = new Map();
 
-/** 換調弦：舊調弦算出來的按法都作廢，之後的指型一律用新調弦搜尋 */
+/** Change tuning: discard fingerings from the old tuning and search using the new tuning from now on */
 export function setTuning(tuning) {
   TUNING = [...tuning];
   standardTuning = sameTuning(TUNING, STANDARD_TUNING);
@@ -343,8 +343,8 @@ export function setTuning(tuning) {
 }
 
 /**
- * 取得和弦按法。
- * @param {string} name 例如 "Am7"
+ * Get a chord fingering.
+ * @param {string} name For example, "Am7"
  * @returns {{name: string, frets: Array<number|null>, notes: Array<{string:number,fret:number}>} | null}
  */
 export function voicing(name) {
@@ -353,7 +353,7 @@ export function voicing(name) {
 
   let frets = null;
 
-  // 先看查表（同音異名也要試，例如 Bb 要找 A#）
+  // Check the lookup table first (also try enharmonic equivalents, e.g. look up A# for Bb)
   const parsed = parseChord(name);
   if (parsed) {
     const sharp = PITCH_SHARP[parsed.root] + parsed.suffix;
@@ -381,7 +381,7 @@ export function voicing(name) {
   return result;
 }
 
-/** 把 frets 陣列（第1弦→第6弦，null = 不彈）包成和弦物件 */
+/** Wrap a frets array (first string → sixth string, null = do not play) in a chord object */
 export function toVoicing(name, frets) {
   return {
     name,
@@ -393,8 +393,8 @@ export function toVoicing(name, frets) {
 const allCache = new Map();
 
 /**
- * 同一個和弦在琴頸上各個把位的指型，由低把位往高排。
- * 第一個一定是最常用的那個（查表的開放和弦優先）。
+ * Fingerings for a chord at each position on the neck, ordered from low to high.
+ * The first is always the most commonly used (lookup-table open chords take priority).
  * @param {string} name
  * @returns {Array<{name:string, frets:Array<number|null>, notes:Array, base:number, fingers:number, label:string}>}
  */
@@ -419,12 +419,12 @@ export function allVoicings(name) {
       ...toVoicing(name, frets),
       base,
       fingers: meta.fingers ?? countFingers(frets),
-      // 有用到開放弦的就是「開放和弦」，其餘按最低的按壓格標把位
+      // Shapes using open strings are "open chords"; otherwise, label by the lowest fretted position
       label: hasOpen ? 'Open' : `Fret ${base}`,
     });
   };
 
-  // 查表的常用按法排第一個
+  // Put the common lookup-table fingering first
   const sharp = PITCH_SHARP[parsed.root] + parsed.suffix;
   const flat = PITCH_FLAT[parsed.root] + parsed.suffix;
   const table = standardTuning ? OPEN_SHAPES[name] ?? OPEN_SHAPES[sharp] ?? OPEN_SHAPES[flat] : null;
@@ -436,14 +436,14 @@ export function allVoicings(name) {
 
   out.sort((a, b) => a.base - b.base);
 
-  // 去掉「同一個指型只是多悶一條弦」的版本，留比較完整的那個
+  // Remove versions that use the same shape but mute an extra string; keep the more complete one
   const kept = out.filter((v, i) => !out.some((other, j) => j !== i && isSubsetVoicing(v, other)));
 
   allCache.set(name, kept);
   return kept;
 }
 
-/** a 是不是 b 的子集（按壓位置相同，只是少響幾條弦） */
+/** Is a a subset of b (same fretted positions, but fewer strings sounding)? */
 function isSubsetVoicing(a, b) {
   let fewer = false;
   for (let i = 0; i < 6; i++) {
@@ -467,16 +467,16 @@ function countFingers(frets) {
 }
 
 /**
- * 和弦圖 SVG（直式）。
- * @param {string|{name:string, frets:Array<number|null>}} chord 和弦名，或已經算好的指型
+ * Chord diagram SVG (portrait).
+ * @param {string|{name:string, frets:Array<number|null>}} chord Chord name or an already computed shape
  */
 export function diagramSvg(chord, { width = 74, frets = 5 } = {}) {
   const name = typeof chord === 'string' ? chord : chord.name;
   const v = typeof chord === 'string' ? voicing(chord) : chord;
-  const padX = 13;       // 左邊留給把位數字
-  const nameY = 10;      // 和弦名稱的基線
-  const markY = 20;      // ○ / × 記號的一列
-  const padTop = 27;     // 琴枕位置，要在記號下面才不會疊在一起
+  const padX = 13;       // Space on the left for the position number
+  const nameY = 10;      // Chord-name baseline
+  const markY = 20;      // Row for ○ / × markers
+  const padTop = 27;     // Nut position; keep it below the markers to avoid overlap
   const boardW = width - padX * 2;
   const stringGap = boardW / 5;
   const fretGap = 15;
@@ -492,17 +492,17 @@ export function diagramSvg(chord, { width = 74, frets = 5 } = {}) {
   const maxFret = played.length ? Math.max(...played) : 1;
   const offset = maxFret > frets ? minFret - 1 : 0;
 
-  const x = (stringIdx) => padX + (5 - stringIdx) * stringGap; // 第1弦畫在右邊
+  const x = (stringIdx) => padX + (5 - stringIdx) * stringGap; // Draw the first string on the right
   const y = (fret) => padTop + (fret - 0.5) * fretGap;
 
   let out = `<svg viewBox="0 0 ${width} ${height}" class="chord-dia">`;
   out += `<text x="${width / 2}" y="${nameY}" text-anchor="middle" class="dia-name">${escapeHtml(name)}</text>`;
 
-  // 弦
+  // Strings
   for (let s = 0; s < 6; s++) {
     out += `<line x1="${x(s)}" y1="${padTop}" x2="${x(s)}" y2="${padTop + fretGap * frets}" class="dia-string"/>`;
   }
-  // 琴格
+  // Frets
   for (let f = 0; f <= frets; f++) {
     const cls = f === 0 && offset === 0 ? 'dia-nut' : 'dia-fret';
     out += `<line x1="${padX}" y1="${padTop + f * fretGap}" x2="${padX + boardW}" y2="${padTop + f * fretGap}" class="${cls}"/>`;

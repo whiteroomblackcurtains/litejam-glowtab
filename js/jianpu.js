@@ -1,19 +1,19 @@
-// 從 alphaTab 的樂譜物件產生數字簡譜。
+// Generate numbered notation from an alphaTab score object.
 //
-// 對得上台灣常見的寫法：
-//   1–7 是音階級數，非音階內的音加 # / b
-//   高八度在數字上面點、低八度在下面點（多一個八度就多一點）
-//   八分音符一條底線、十六分兩條
-//   長音用 - 補（二分 = 「1 -」、全音 = 「1 - - -」）
-//   休止是 0
+// Common Taiwanese numbered-notation conventions:
+//   1–7 are scale degrees; add # / b for notes outside the scale.
+//   Dots above a number indicate higher octaves, dots below indicate lower octaves (one per octave).
+//   Eighth notes have one underline; sixteenth notes have two.
+//   Extend long notes with - (half note = "1 -", whole note = "1 - - -").
+//   Rests are represented by 0.
 
 const DEGREE_BY_INTERVAL = ['1', '#1', '2', '#2', '3', '4', '#4', '5', '#5', '6', '#6', '7'];
 
-// 「沒有點」的基準八度。預設抓 C4 附近，但實際會依樂曲音域調整
-// （吉他譜大多落在 C3–C5，固定用 C4 當基準會標出一堆低八度點，很難讀）。
+// Reference octave with no dots. Defaults near C4, but adjusts to the song's range.
+// (Guitar scores mostly fall between C3 and C5; always using C4 would add many hard-to-read low-octave dots.)
 const DEFAULT_BASE_MIDI = 60;
 
-/** 依樂曲音域挑一個讓八度點最少的主音位置 */
+/** Choose a tonic position that minimizes octave dots for the song's range. */
 export function tonicMidiFor(keyRoot, referenceMidi = DEFAULT_BASE_MIDI) {
   const pc = ((keyRoot % 12) + 12) % 12;
   let best = null;
@@ -25,11 +25,11 @@ export function tonicMidiFor(keyRoot, referenceMidi = DEFAULT_BASE_MIDI) {
 }
 
 /**
- * MIDI 音高 → 簡譜
+ * Convert a MIDI pitch to numbered notation.
  * @param {number} midi
- * @param {number} keyRoot 調的主音音級（0 = C）
- * @param {number} tonicMidi 主音實際落在哪個 MIDI（決定幾個八度點）
- * @returns {{num:string, octave:number}} octave 0 = 沒點、+1 = 上面一點、-1 = 下面一點
+ * @param {number} keyRoot Tonic pitch class of the key (0 = C).
+ * @param {number} tonicMidi MIDI pitch of the tonic (determines the number of octave dots).
+ * @returns {{num:string, octave:number}} octave 0 = no dot, +1 = one dot above, -1 = one dot below.
  */
 export function midiToJianpu(midi, keyRoot = 0, tonicMidi = null) {
   const interval = (((midi - keyRoot) % 12) + 12) % 12;
@@ -39,18 +39,18 @@ export function midiToJianpu(midi, keyRoot = 0, tonicMidi = null) {
   return { num, octave };
 }
 
-/** alphaTab 的 duration 值（1=全音 2=二分 4=四分 8=八分…）→ 幾條底線、要補幾個長音線 */
+/** Convert alphaTab duration values (1=whole, 2=half, 4=quarter, 8=eighth, …) to underlines and extension dashes. */
 function durationShape(duration, dots = 0) {
   const underlines = duration >= 8 ? Math.round(Math.log2(duration / 4)) : 0;
-  // 比四分音符長的用 - 補：二分補 1 個、全音補 3 個
+  // Use - to extend notes longer than a quarter note: one for a half note, three for a whole note.
   let dashes = duration <= 2 ? 4 / duration - 1 : 0;
   if (dots > 0 && duration <= 4) dashes += dots * 0.5;
   return { underlines, dashes: Math.round(dashes) };
 }
 
 /**
- * 把樂譜轉成簡譜資料。
- * @param {object} score alphaTab 的 Score
+ * Convert a score to numbered-notation data.
+ * @param {object} score An alphaTab Score.
  * @param {{keyRoot?:number, trackIndex?:number, staffIndex?:number}} opts
  * @returns {{bars: Array<Array<{num:string, octave:number, underlines:number, dashes:number, rest:boolean}>>}}
  */
@@ -58,7 +58,7 @@ export function scoreToJianpu(score, { keyRoot = 0, trackIndex = 0, staffIndex =
   const staff = score?.tracks?.[trackIndex]?.staves?.[staffIndex];
   if (!staff) return { bars: [] };
 
-  // 先掃一遍拿到音域中位數，用它決定主音放哪個八度，八度點才不會滿天飛
+  // Find the median pitch first and use it to choose the tonic's octave, keeping octave dots to a minimum.
   const pitches = [];
   for (const bar of staff.bars) {
     for (const voice of bar.voices) {
@@ -83,24 +83,24 @@ export function scoreToJianpu(score, { keyRoot = 0, trackIndex = 0, staffIndex =
           cells.push({ num: '0', octave: 0, underlines, dashes, rest: true });
           continue;
         }
-        // 單音旋律看最高音就好（和弦的話取最高音當旋律）
+        // For a monophonic melody, use the highest note (for chords, treat the highest note as the melody).
         const top = beat.notes.reduce((a, b) => (b.realValue > a.realValue ? b : a));
         const { num, octave } = midiToJianpu(top.realValue, keyRoot, tonicMidi);
         cells.push({ num, octave, underlines, dashes, rest: false, tied: !!top.isTieDestination });
       }
-      break; // 只取第一個聲部，簡譜是單線的
+      break; // Use only the first voice; numbered notation is monophonic.
     }
     bars.push(cells);
   }
   return { bars };
 }
 
-/** 產生簡譜的 HTML */
+/** Generate numbered-notation HTML. */
 export function jianpuHtml(data, { barsPerRow = 4 } = {}) {
   if (!data.bars.length) return '<p class="muted small">This score has no notes to convert to numbered notation.</p>';
 
   const cellHtml = (c) => {
-    // 休止符：每一拍一個 0（不用延長線），長休止就是連續的 0
+    // Rests: one 0 per beat (no extension dashes); longer rests are consecutive 0s.
     if (c.rest) {
       const first = `<span class="jp-cell jp-rest jp-u${c.underlines}"><span class="jp-num">0</span></span>`;
       const more = `<span class="jp-cell jp-rest"><span class="jp-num">0</span></span>`.repeat(c.dashes);
@@ -113,7 +113,7 @@ export function jianpuHtml(data, { barsPerRow = 4 } = {}) {
           ? `<span class="jp-dot jp-down">${'·'.repeat(Math.min(3, -c.octave))}</span>`
           : '';
     const num = c.tied ? '-' : c.num;
-    // 長音延長線：每個 - 佔一拍寬，讓二分／全音符的長度對得上，看起來才工整
+    // Each extension dash takes one beat's width, so half and whole notes align with their durations.
     const dashes = `<span class="jp-dash">-</span>`.repeat(c.dashes);
     return (
       `<span class="jp-cell jp-u${c.underlines}">` +

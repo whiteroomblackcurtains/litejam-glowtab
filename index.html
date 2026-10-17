@@ -446,16 +446,18 @@
             <button id="modal-close" class="btn btn-ghost btn-sm">✕</button>
           </header>
 
-          <!-- 三種來源用分頁分開。全部疊在一起的話視窗會太高，
-               螢幕矮一點下面的選檔按鈕就掉到畫面外，會以為壞了。 -->
+          <!-- Separate the three sources into tabs. Showing them all at once makes
+               the dialog too tall, and on shorter screens the file picker can slip
+               out of view and look broken. -->
           <div class="modal-tabs" role="tablist">
             <button class="modal-tab on" data-pane="pane-search">Search by Title</button>
             <button class="modal-tab" data-pane="pane-url">YouTube URL</button>
             <button class="modal-tab" data-pane="pane-file">Local Audio</button>
           </div>
 
-          <!-- 進度放最上面：放在底部的話，搜尋結果一展開就被推到看不見的地方，
-               下載新歌要等十幾秒，使用者會以為沒在動 -->
+          <!-- Keep progress at the top: at the bottom, it would be pushed out of sight
+               as soon as search results expand. Downloading a new song takes several
+               seconds, so users might think nothing is happening. -->
           <div id="job-progress" class="job" hidden>
             <div class="job-bar"><div id="job-fill" class="job-fill"></div></div>
             <p id="job-msg" class="muted small">Preparing…</p>
@@ -485,8 +487,9 @@
                 <button id="btn-audio-file" class="btn btn-primary">Choose Audio…</button>
                 <button id="btn-stems-file" class="btn">Split Stems Only</button>
               </div>
-              <!-- accept 給寬一點：清單太窄的話 macOS 選檔視窗會把檔案變灰選不到，
-                   看起來就像功能壞了。反正後面是 ffmpeg 在解，格式吃得很雜。 -->
+              <!-- Keep the accept list broad: if it is too restrictive, macOS grays out
+                   files in the picker so they cannot be selected, making the feature
+                   look broken. ffmpeg handles a wide range of formats anyway. -->
               <input id="audio-input" type="file"
                 accept="audio/*,video/*,.mp3,.m4a,.m4v,.wav,.aac,.flac,.ogg,.opus,.aif,.aiff,.wma,.mp4,.mov,.webm,.mkv,.avi,.caf,.amr,.3gp"
                 hidden />

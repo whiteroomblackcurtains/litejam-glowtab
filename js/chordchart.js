@@ -1,4 +1,4 @@
-// 和弦譜的畫面：小節格子 + 和弦圖 + 播放游標
+// Chord chart view: bar cells + chord diagrams + playback cursor
 
 import {
   chordColorClass,
@@ -40,29 +40,29 @@ export class ChordChart {
     this._slotEls = [];
     this._autoScroll = true;
 
-    // 選段循環：點一個小節設起點，Shift 點另一個設終點
+    // Section loop: click a bar to set the start, then Shift-click another to set the end
     this.loopFrom = null;
     this.loopTo = null;
 
-    // 顯示成和弦名還是級數，以及級數要用哪個調當 1
+    // Display chord names or scale degrees, and which key to use as 1 for scale degrees
     this.displayMode = 'chord'; // 'chord' | 'degree'
     this.keyRoot = 0;
 
-    // 移調夾夾在第幾格（0 = 沒夾）
+    // Capo fret (0 = no capo)
     this.capo = 0;
 
-    // 歌詞：每個小節一筆 {text, pinyin}，由使用者自己貼進來
+    // Lyrics: one {text, pinyin} entry per bar, pasted in by the user
     this.lyrics = [];
 
-    // 手動修和弦
+    // Manually edited chords
     this.editMode = false;
-    this.edited = new Set(); // 被改過的拍序號
+    this.edited = new Set(); // Beat numbers that have been edited
     this._popover = null;
     this._onEditsChanged = null;
   }
 
   /**
-   * 設定歌詞。索引就是小節序號。
+   * Set lyrics. The index is the bar number.
    * @param {Array<{text:string, pinyin?:string}>} lyrics
    */
   setLyrics(lyrics) {
@@ -81,19 +81,19 @@ export class ChordChart {
     this.closePopover();
   }
 
-  /** 改完和弦要通知外面存檔 */
+  /** Notify the caller to save after a chord is edited */
   onEditsChanged(fn) {
     this._onEditsChanged = fn;
   }
 
-  /** 目前所有手動修改，形如 {拍序號: 和弦名} */
+  /** All current manual edits, in the form {beat number: chord name} */
   editsSnapshot() {
     const out = {};
     for (const i of this.edited) out[i] = this.data.perBeat[i].name;
     return out;
   }
 
-  /** 把存下來的修改套回去（重新分析同一首歌時用） */
+  /** Reapply saved edits (used when re-analyzing the same song) */
   applyEdits(edits) {
     if (!edits || !this.data) return;
     for (const [key, name] of Object.entries(edits)) {
@@ -115,7 +115,7 @@ export class ChordChart {
     pb.root = parsed ? parsed.root : null;
     pb.quality = parsed ? parsed.quality : 'nc';
 
-    // bars[].beats 是從 perBeat 推出來的，要一起更新才畫得對
+    // bars[].beats is derived from perBeat, so both must be updated for the chart to render correctly
     const bpb = d.beatsPerBar;
     const barIdx = Math.floor((beatIndex - d.downbeat) / bpb);
     const slotIdx = beatIndex - d.downbeat - barIdx * bpb;
@@ -125,10 +125,10 @@ export class ChordChart {
   }
 
   /**
-   * 改和弦。
+   * Edit a chord.
    * @param {number} beatIndex
-   * @param {string} name 新的和弦名，'N.C.' 表示沒有和弦
-   * @param {'beat'|'run'} scope 只改這一拍，還是改掉連續相同的整段
+   * @param {string} name New chord name; 'N.C.' means no chord
+   * @param {'beat'|'run'} scope Edit only this beat or the entire consecutive run of the same chord
    */
   applyChordEdit(beatIndex, name, scope = 'run') {
     const d = this.data;
@@ -153,7 +153,7 @@ export class ChordChart {
     this._onEditsChanged?.(this.editsSnapshot());
   }
 
-  /** 清掉所有手動修改（要重新分析才能拿回原始判定） */
+  /** Clear all manual edits (re-analyze to restore the original detections) */
   clearEdits() {
     this.edited.clear();
     this._onEditsChanged?.({});
@@ -164,7 +164,7 @@ export class ChordChart {
     this._popover = null;
   }
 
-  /** 點某一拍要改和弦時跳出來的小面板 */
+  /** Small panel that appears when clicking a beat to edit its chord */
   openEditPopover(beatIndex, anchor) {
     this.closePopover();
     const current = this.data.perBeat[beatIndex]?.name ?? 'N.C.';
@@ -232,7 +232,7 @@ export class ChordChart {
     this.el.appendChild(pop);
     this._popover = pop;
 
-    // 貼在被點的小節旁邊，但不要超出畫面
+    // Position it beside the clicked bar without letting it go off-screen
     const box = this.el.getBoundingClientRect();
     const rect = anchor.getBoundingClientRect();
     const width = 268;
@@ -242,20 +242,20 @@ export class ChordChart {
     pop.style.top = `${rect.bottom - box.top + 6}px`;
   }
 
-  /** 切換和弦名 / 級數譜 */
+  /** Toggle between chord names and scale-degree notation */
   setDisplayMode(mode) {
     this.displayMode = mode === 'degree' ? 'degree' : 'chord';
     this.render();
     this.setBeat(this.beatIndex, true);
   }
 
-  /** 調弦換了：和弦圖與目前這拍的指型都要重算 */
+  /** Retune: recalculate chord diagrams and the fingering for the current beat */
   refresh() {
     this.render();
     this.setBeat(this.beatIndex, true);
   }
 
-  /** 移調夾夾第幾格（0–7）。改了之後顯示的和弦名會變成「你實際按的指型」。 */
+  /** Set the capo fret (0–7). After this, displayed chord names reflect the shape you actually play. */
   setCapo(fret) {
     this.capo = Math.max(0, Math.min(11, fret | 0));
     this.render();
@@ -263,19 +263,19 @@ export class ChordChart {
   }
 
   /**
-   * 建議移調夾位置：哪一格能讓最多和弦變成好按的開放和弦。
-   * @returns {Array<{capo:number, easy:number, total:number, chords:string[]}>} 由好到壞排序
+   * Recommend a capo position: which fret turns the most chords into easy open shapes.
+   * @returns {Array<{capo:number, easy:number, total:number, chords:string[]}>} Sorted from best to worst
    */
   suggestCapo(maxFret = 7) {
     if (!this.data) return [];
-    // 吉他上最好按的那幾個（含常用的七和弦）
+    // The easiest chords to play on guitar (including common seventh chords)
     const EASY = new Set([
       'C', 'D', 'E', 'G', 'A', 'Am', 'Em', 'Dm', 'F',
       'C7', 'D7', 'E7', 'G7', 'A7', 'Am7', 'Em7', 'Dm7',
       'Cmaj7', 'Dmaj7', 'Fmaj7', 'Gmaj7', 'Amaj7', 'Asus4', 'Dsus4', 'Esus4',
     ]);
 
-    // 只看實際用到的和弦種類，並用出現次數當權重
+    // Consider only the chords actually used and weight them by frequency
     const counts = new Map();
     for (const b of this.data.perBeat) {
       const sounding = this.transpose ? transposeName(b.name, this.transpose) : b.name;
@@ -291,7 +291,7 @@ export class ChordChart {
       const shapes = new Set();
       for (const [name, n] of counts) {
         const shape = capo ? transposeName(name, -capo) : name;
-        // 斜線和弦看本體好不好按就好
+        // For slash chords, consider only how easy the main chord is to play
         const base = shape.split('/')[0];
         shapes.add(base);
         total += n;
@@ -303,7 +303,7 @@ export class ChordChart {
     return out;
   }
 
-  /** 級數譜要以哪個音當 1 */
+  /** Which note to use as 1 in scale-degree notation */
   setKeyRoot(root) {
     this.keyRoot = ((root % 12) + 12) % 12;
     if (this.displayMode === 'degree') {
@@ -312,14 +312,14 @@ export class ChordChart {
     }
   }
 
-  /** 畫面上要顯示的文字（和弦名或級數） */
+  /** Text to display (chord name or scale degree) */
   label(rawName) {
     const sounding = this.transpose ? transposeName(rawName, this.transpose) : rawName;
     if (this.displayMode === 'degree') {
-      // 級數講的是和聲功能，跟手指按在哪一格無關，所以不受移調夾影響
+      // Scale degrees describe harmonic function, not finger position, so they are unaffected by the capo
       return degreeName(sounding, (this.keyRoot + this.transpose + 120) % 12);
     }
-    // 夾了移調夾就顯示「你實際按的指型」，那才是照著彈的時候要看的東西
+    // With a capo, display the shape you actually play—that is what you need to see while playing
     return this.capo ? transposeName(sounding, -this.capo) : sounding;
   }
 
@@ -333,7 +333,7 @@ export class ChordChart {
     this.render();
   }
 
-  /** 循環區間的時間範圍，沒選就回 null */
+  /** Time range for the loop, or null if none is selected */
   get loopRange() {
     if (this.loopFrom == null || !this.data) return null;
     const bars = this.data.bars;
@@ -378,8 +378,8 @@ export class ChordChart {
     this._autoScroll = on;
   }
 
-  /** 顯示用的和弦名（已套用移調） */
-  /** 實際聽到的和弦（不管移調夾夾在哪一格） */
+  /** Chord name for display (transposition applied) */
+  /** Chord that is actually heard (regardless of capo fret) */
   soundingAt(beatIndex) {
     const d = this.data;
     if (!d || beatIndex < 0 || beatIndex >= d.perBeat.length) return null;
@@ -388,8 +388,8 @@ export class ChordChart {
   }
 
   /**
-   * 你手指實際按的那個和弦。
-   * 夾了移調夾之後，聽到 D 是按 C 的指型（capo 2），所以要往下移 capo 格。
+   * The chord shape you actually play.
+   * With a capo, to sound a D you play a C shape (capo 2), so transpose down by the capo fret.
    */
   nameAt(beatIndex) {
     const sounding = this.soundingAt(beatIndex);
@@ -397,13 +397,13 @@ export class ChordChart {
     return transposeName(sounding, -this.capo);
   }
 
-  /** 這一拍該亮的按法 */
+  /** Fingering to light for this beat */
   voicingAt(beatIndex) {
     const name = this.nameAt(beatIndex);
     return name ? voicing(name) : null;
   }
 
-  /** 時間 → 拍序號 */
+  /** Time → beat number */
   beatAtTime(time) {
     const beats = this.data?.beats;
     if (!beats?.length) return -1;
@@ -427,7 +427,7 @@ export class ChordChart {
 
     const bpb = d.beatsPerBar;
 
-    // ---- 標頭
+    // ---- Header
     const head = document.createElement('div');
     head.className = 'cc-head';
     const keyLabel = this.transpose
@@ -445,7 +445,7 @@ export class ChordChart {
     head.querySelector('.cc-title').textContent = d.title || 'Chord Chart';
     this.el.appendChild(head);
 
-    // ---- 用到的和弦圖
+    // ---- Chord diagrams used
     const used = [];
     const seen = new Set();
     for (const b of d.perBeat) {
@@ -460,7 +460,7 @@ export class ChordChart {
       strip.className = 'cc-diagrams';
       for (const n of used.slice(0, 16)) {
         const card = document.createElement('button');
-        // 和弦圖一律顯示真正的和弦名（指型是實體按法，不是級數）
+        // Chord diagrams always show the actual chord name (a shape is a physical fingering, not a scale degree)
         card.className = `cc-dia q-${chordColorClass(n)}`;
         card.title =
           this.displayMode === 'degree'
@@ -473,7 +473,7 @@ export class ChordChart {
       this.el.appendChild(strip);
     }
 
-    // ---- 段落快速跳（整首歌的骨架，翻譜時最好用）
+    // ---- Quick section navigation (the song's structure; useful when scanning the chart)
     const sections = d.sections ?? [];
     if (sections.length > 1) {
       const nav = document.createElement('div');
@@ -492,13 +492,13 @@ export class ChordChart {
       this.el.appendChild(nav);
     }
 
-    // ---- 小節格
+    // ---- Bar cells
     const grid = document.createElement('div');
     grid.className = 'cc-grid';
     let lastSection;
 
     d.bars.forEach((bar, barIdx) => {
-      // 段落換了就插一條橫跨整列的標題
+      // Insert a full-width heading when the section changes
       if (bar.section !== lastSection) {
         lastSection = bar.section;
         if (bar.section) {
@@ -529,14 +529,14 @@ export class ChordChart {
         const beatIndex = d.downbeat + barIdx * bpb + slotIdx;
 
         const slot = document.createElement('span');
-        // 大調藍、小調紅；改過的加一個記號
+        // Major chords are blue, minor chords are red; add a marker to edited chords
         slot.className =
           `cc-slot ${isNew ? 'is-new' : 'is-hold'} q-${chordColorClass(raw)}` +
           (this.edited.has(beatIndex) ? ' is-edited' : '');
         slot.textContent = isNew ? this.label(raw) : '·';
         if (this.edited.has(beatIndex)) slot.title = 'Manually edited';
         slot.addEventListener('click', (e) => {
-          if (!this.editMode) return; // 沒進編輯模式就交給小節的點擊（跳播放位置）
+          if (!this.editMode) return; // Outside edit mode, let the bar click handler seek to this position
           e.stopPropagation();
           this.openEditPopover(beatIndex, slot);
         });
@@ -547,7 +547,7 @@ export class ChordChart {
 
       cell.appendChild(slots);
 
-      // 歌詞（中文 + 拼音兩行）
+      // Lyrics (Chinese + pinyin on two lines)
       const lyric = this.lyrics[barIdx];
       if (lyric && (lyric.text || lyric.pinyin)) {
         const wrap = document.createElement('div');
@@ -568,14 +568,14 @@ export class ChordChart {
       }
 
       cell.addEventListener('click', (e) => {
-        if (this.editMode) return; // 編輯模式下由格子自己處理
+        if (this.editMode) return; // In edit mode, the cell handles this itself
         if (e.shiftKey && this.loopFrom != null) {
-          // Shift 點第二個小節 → 設成循環區間的終點
+          // Shift-click a second bar → set the loop end
           this.setLoop(this.loopFrom, barIdx);
           return;
         }
         if (e.altKey || (e.metaKey && !e.shiftKey)) {
-          // Alt / ⌘ 點 → 設循環起點，再 Shift 點另一個設終點
+          // Alt / ⌘-click → set the loop start, then Shift-click another bar to set the end
           this.setLoop(barIdx, null);
           return;
         }
@@ -588,7 +588,7 @@ export class ChordChart {
     this.el.appendChild(grid);
     this._paintLoop();
 
-    // 點空白處關掉編輯小面板
+    // Click outside to close the edit panel
     if (!this._outsideBound) {
       this._outsideBound = true;
       this.el.addEventListener('click', () => this.closePopover());
@@ -644,7 +644,7 @@ export class ChordChart {
     this.beatIndex = -1;
   }
 
-  /** 匯出成純文字和弦譜，方便貼到講義或訊息裡 */
+  /** Export as a plain-text chord chart for pasting into handouts or messages */
   toText() {
     const d = this.data;
     if (!d) return '';
@@ -654,7 +654,7 @@ export class ChordChart {
     lines.push(`${Math.round(d.bpm)} BPM · ${d.key}${this.transpose ? ` (transpose ${this.transpose > 0 ? '+' : ''}${this.transpose})` : ''} · ${d.beatsPerBar}/4 · ${modeLabel}`);
     lines.push('');
 
-    // 有歌詞的話欄位要加寬，中文才塞得進去
+    // Widen the columns when lyrics are present so Chinese text fits
     const withLyrics = this.hasLyrics();
     const colWidth = withLyrics ? 22 : 14;
     const perRow = withLyrics ? 2 : 4;
@@ -669,7 +669,7 @@ export class ChordChart {
       });
       lines.push(`| ${row.join('| ')}|`);
 
-      // 歌詞跟著和弦一起排，才看得出字落在哪個小節
+      // Keep lyrics aligned with the chords so it is clear which bar each word belongs to
       if (withLyrics) {
         const zh = [];
         const py = [];
@@ -693,11 +693,11 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-/** 中日韓文字在等寬字體裡佔兩格，用 padEnd 會對不齊 */
+/** CJK characters take two cells in monospace fonts, so padEnd will not align them correctly */
 function displayWidth(s) {
   let w = 0;
   for (const ch of String(s)) {
-    w += /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1;
+    w += /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1;
   }
   return w;
 }

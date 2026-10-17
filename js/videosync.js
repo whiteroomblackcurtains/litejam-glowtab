@@ -1,11 +1,11 @@
-// 嵌 YouTube 影片，讓和弦譜／單音譜跟著影片跑。
+// Embed a YouTube video and sync the chord chart/solo tab to it.
 //
-// 我們分析的音訊就是從同一支影片抓下來的，所以影片的時間軸和拍點時間直接對得上，
-// 不需要另外做對齊。
+// The analyzed audio is extracted from this same video, so its timeline already matches the beat timings;
+// no separate alignment is needed.
 
 let apiReady = null;
 
-/** 載入 YouTube IFrame API（只載一次） */
+/** Load the YouTube IFrame API (only once). */
 function loadApi() {
   if (apiReady) return apiReady;
   apiReady = new Promise((resolve, reject) => {
@@ -66,7 +66,7 @@ export class VideoPlayer {
       this.player = new YT.Player(host, {
         videoId,
         playerVars: {
-          // 不要相關影片、不要 YouTube logo 導走，keyboard 交給我們處理
+          // Hide related videos and avoid YouTube logo links; keyboard controls are handled by our app.
           rel: 0,
           modestbranding: 1,
           playsinline: 1,
@@ -97,7 +97,7 @@ export class VideoPlayer {
 
   get paused() {
     const state = this.player?.getPlayerState?.();
-    return state !== 1 && state !== 3; // 播放中或緩衝中都算沒暫停
+    return state !== 1 && state !== 3; // Playing or buffering both count as not paused.
   }
 
   get currentTime() {
@@ -113,7 +113,7 @@ export class VideoPlayer {
   }
 
   setRate(rate) {
-    // YouTube 只吃它支援的幾個速度，挑最接近的
+    // YouTube supports only a few playback speeds; choose the closest one.
     const allowed = this.player?.getAvailablePlaybackRates?.() ?? [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
     const best = allowed.reduce((a, b) => (Math.abs(b - rate) < Math.abs(a - rate) ? b : a), allowed[0]);
     this.player?.setPlaybackRate?.(best);

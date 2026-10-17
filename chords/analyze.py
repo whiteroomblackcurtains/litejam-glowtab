@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""音檔 → 和弦譜。
+"""Audio file → chord chart.
 
-流程：
-  ffmpeg 解碼 → 半音頻譜（含泛音疊加）→ 色度（chroma）
-  → 節奏偵測（spectral flux + 自相關 + 動態規劃抓拍點）
-  → 每拍色度對和弦模板打分 → Viterbi 平滑 → 分小節
+Pipeline:
+  ffmpeg decoding → semitone spectrum (with harmonic summation) → chroma
+  → rhythm detection (spectral flux + autocorrelation + dynamic-programming beat tracking)
+  → score chord templates against each beat's chroma → Viterbi smoothing → split into bars
 
-只依賴 numpy 與系統上的 ffmpeg。
+Depends only on numpy and the system's ffmpeg.
 """
 
 import json
@@ -16,39 +16,42 @@ import warnings
 
 import numpy as np
 
-# macOS 的 Accelerate BLAS 會讓 numpy 的 matmul 冒出假的 divide-by-zero / overflow 警告
-# （輸入輸出都是有限值，已實測確認），這裡直接關掉，免得污染 stdout 的 JSON。
+# macOS Accelerate BLAS can make numpy matmul emit false divide-by-zero / overflow warnings
+# (inputs and outputs are all finite, as verified in testing); disable them here to keep stdout JSON clean.
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 np.seterr(all='ignore')
 
 SR = 11025
 N_FFT = 4096
 HOP = 512
-FPS = SR / HOP  # 每秒幾個分析框 ≈ 21.5
+FPS = SR / HOP  # Analysis frames per second ≈ 21.5
 
 MIDI_LO = 36  # C2
 MIDI_HI = 95  # B6
 N_NOTES = MIDI_HI - MIDI_LO + 1
 
-BASS_LO = 36  # 低音區 C2
+BASS_LO = 36  # Bass range starts at C2
 BASS_HI = 55  # G3
 
-# 泛音疊加：第 h 泛音落在往上 12*log2(h) 個半音處
+# Harmonic summation: the h-th harmonic lies 12*log2(h) semitones above the fundamental
 HARMONICS = [(0, 1.0), (12, 0.5), (19, 0.33), (24, 0.25), (28, 0.18), (31, 0.12)]
 
 PITCH_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 PITCH_FLAT = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
 
-# 和弦模板。
+# Chord templates.
 #
-# 三和音最麻煩的一點是「前一個和弦的延音」：Am 的 E 殘留到 F 上面，F 就會被聽成 Fmaj7。
-# 光靠固定罰分很難分（殘響 0.09 vs 真七和弦 0.16 的差距太近，而且會隨錄音而變），
-# 所以改成看**延伸音相對於三和音本體的強度比**：
-#   真七和弦的七度和三和音本體差不多強（比值 ≈ 1.2）
-#   殘響留下來的音明顯較弱（比值 ≈ 0.8）
-# 比值低於 EXT_RATIO_MIN 就按差距線性扣分，見 score_chords()。
+# The biggest challenge with triads is sustain from the previous chord: an E lingering
+# from Am over F can make F sound like Fmaj7.
+# A fixed penalty is not enough to distinguish them (reverb at 0.09 vs a true seventh
+# chord at 0.16 is too close, and varies by recording), so instead compare the
+# **strength of extension tones relative to the triad itself**:
+#   In a true seventh chord, the seventh is about as strong as the triad (ratio ≈ 1.2).
+#   A lingering note from reverb is noticeably weaker (ratio ≈ 0.8).
+# If the ratio is below EXT_RATIO_MIN, subtract a linear penalty proportional to the gap;
+# see score_chords().
 QUALITIES = [
-    # (名稱, 後綴, {音級: 權重}, 基本罰分, 三和音本體音級, 延伸音音級)
+    # (name, suffix, {pitch class: weight}, base penalty, triad pitch classes, extension pitch classes)
     ('maj', '', {0: 1.0, 4: 0.9, 7: 0.8}, 0.000, [0, 4, 7], None),
     ('min', 'm', {0: 1.0, 3: 0.9, 7: 0.8}, 0.000, [0, 3, 7], None),
     ('7', '7', {0: 1.0, 4: 0.85, 7: 0.7, 10: 0.8}, 0.030, [0, 4, 7], 10),
@@ -59,21 +62,21 @@ QUALITIES = [
     ('aug', 'aug', {0: 1.0, 4: 0.9, 8: 0.9}, 0.100, [0, 4], 8),
 ]
 
-EXT_RATIO_MIN = 1.0   # 延伸音／三和音本體 的強度比低於此就扣分
-EXT_RATIO_COST = 0.35  # 每差 1.0 扣多少分
+EXT_RATIO_MIN = 1.0   # Penalize extension/triad strength ratios below this threshold
+EXT_RATIO_COST = 0.35  # Penalty per 1.0 of ratio difference
 
-# Krumhansl–Schmuckler 調性輪廓，用來判大小調與升降記號寫法
+# Krumhansl–Schmuckler key profiles, used to determine major/minor and sharp/flat spelling
 KEY_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 KEY_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 
-# 這些調習慣用降記號
+# These keys conventionally use flats
 FLAT_KEYS = {'F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'd', 'g', 'c', 'f', 'bb', 'eb'}
 
 
-# ---------------------------------------------------------------- 解碼
+# ---------------------------------------------------------------- Decoding
 
 def decode(path, sr=SR):
-    """用 ffmpeg 解成單聲道 float32。"""
+    """Decode to mono float32 with ffmpeg."""
     cmd = [
         'ffmpeg', '-v', 'error', '-i', str(path),
         '-ac', '1', '-ar', str(sr), '-f', 'f32le', '-',
@@ -90,10 +93,10 @@ def decode(path, sr=SR):
     return x
 
 
-# ---------------------------------------------------------------- 頻譜
+# ---------------------------------------------------------------- Spectrum
 
 def semitone_filterbank(sr=SR, n_fft=N_FFT):
-    """半音三角濾波器組：(音數 × 頻率bin)"""
+    """Semitone triangular filter bank: (number of pitches × frequency bins)."""
     freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
     freqs[0] = 1e-6
     bin_midi = 69 + 12 * np.log2(freqs / 440.0)
@@ -101,7 +104,7 @@ def semitone_filterbank(sr=SR, n_fft=N_FFT):
     for i in range(N_NOTES):
         center = MIDI_LO + i
         d = np.abs(bin_midi - center)
-        w = np.clip(1.0 - d, 0.0, 1.0)  # ±1 半音的三角窗
+        w = np.clip(1.0 - d, 0.0, 1.0)  # Triangular window of ±1 semitone
         s = w.sum()
         if s > 0:
             fb[i] = w / s
@@ -109,7 +112,7 @@ def semitone_filterbank(sr=SR, n_fft=N_FFT):
 
 
 def note_spectrogram(x, sr=SR, n_fft=N_FFT, hop=HOP):
-    """半音頻譜（已做對數壓縮）。回傳 (音數 × 框數)。"""
+    """Semitone spectrum (log-compressed). Return (number of pitches × frames)."""
     fb = semitone_filterbank(sr, n_fft)
     win = np.hanning(n_fft)
     n_frames = 1 + max(0, (x.size - n_fft) // hop)
@@ -117,7 +120,7 @@ def note_spectrogram(x, sr=SR, n_fft=N_FFT, hop=HOP):
         raise RuntimeError('The audio file is too short to analyze.')
 
     out = np.zeros((N_NOTES, n_frames))
-    block = 256  # 一次處理幾框，控制記憶體
+    block = 256  # Frames to process at once; limits memory use
     for start in range(0, n_frames, block):
         stop = min(start + block, n_frames)
         idx = np.arange(n_fft)[None, :] + hop * np.arange(start, stop)[:, None]
@@ -129,7 +132,7 @@ def note_spectrogram(x, sr=SR, n_fft=N_FFT, hop=HOP):
 
 
 def harmonic_sum(P):
-    """把泛音的能量疊回基音位置，根音會清楚很多。"""
+    """Fold harmonic energy back to the fundamental, making root notes much clearer."""
     out = np.zeros_like(P)
     for offset, weight in HARMONICS:
         if offset == 0:
@@ -140,7 +143,7 @@ def harmonic_sum(P):
 
 
 def whiten(P, octaves=1.0):
-    """減掉鄰近頻帶的平均，壓掉鼓聲、人聲氣息之類的寬頻能量。"""
+    """Subtract the mean of neighboring bands to suppress broadband energy from drums, vocal breaths, and similar sounds."""
     k = max(3, int(round(12 * octaves)))
     kernel = np.ones(k) / k
     local = np.apply_along_axis(lambda c: np.convolve(c, kernel, mode='same'), 0, P)
@@ -148,7 +151,7 @@ def whiten(P, octaves=1.0):
 
 
 def chroma_from_notes(P, lo=MIDI_LO, hi=MIDI_HI):
-    """半音頻譜折成 12 維色度。"""
+    """Fold the semitone spectrum into 12-dimensional chroma."""
     C = np.zeros((12, P.shape[1]))
     for i in range(N_NOTES):
         midi = MIDI_LO + i
@@ -159,14 +162,14 @@ def chroma_from_notes(P, lo=MIDI_LO, hi=MIDI_HI):
     return C / norm
 
 
-# ---------------------------------------------------------------- 節奏
+# ---------------------------------------------------------------- Rhythm
 
 def onset_envelope(P):
-    """頻譜通量：能量往上跳的地方就是起音。"""
+    """Spectral flux: points where energy jumps are note onsets."""
     D = np.diff(P, axis=1)
     env = np.maximum(D, 0.0).sum(axis=0)
     env = np.concatenate([[0.0], env])
-    # 稍微平滑，去掉毛刺
+    # Smooth slightly to remove spikes
     kernel = np.hanning(5)
     kernel /= kernel.sum()
     env = np.convolve(env, kernel, mode='same')
@@ -176,7 +179,7 @@ def onset_envelope(P):
 
 
 def estimate_period(env, bpm_min=55.0, bpm_max=200.0, bpm_center=115.0, prior_width=0.6):
-    """自相關 + 對數常態先驗 → 每拍幾個分析框。"""
+    """Autocorrelation + log-normal prior → analysis frames per beat."""
     e = env - env.mean()
     ac = np.correlate(e, e, mode='full')[e.size - 1:]
     ac[0] = 0.0
@@ -195,7 +198,7 @@ def estimate_period(env, bpm_min=55.0, bpm_max=200.0, bpm_center=115.0, prior_wi
     bpms = 60.0 * FPS / lags
     score = ac[lag_min:lag_max + 1] * prior_of(bpms)
 
-    # 把整數倍的拍點加進來：真正的拍長在 2、3、4 倍處也會有峰
+    # Include integer-multiple beat candidates: the true beat period may also peak at 2, 3, or 4 times the period
     for mult in (2, 3, 4):
         idx = lags * mult
         ok = idx < ac.size
@@ -203,7 +206,7 @@ def estimate_period(env, bpm_min=55.0, bpm_max=200.0, bpm_center=115.0, prior_wi
 
     best = int(lags[int(np.argmax(score))])
 
-    # 倍頻消歧：抓到半拍或兩拍很常見，比一下 ×½ 與 ×2 哪個更像
+    # Resolve octave ambiguity: half-time or double-time estimates are common, so compare ×½ and ×2
     def strength(lag):
         if lag < lag_min or lag > lag_max:
             return -1.0
@@ -217,10 +220,10 @@ def estimate_period(env, bpm_min=55.0, bpm_max=200.0, bpm_center=115.0, prior_wi
 
 
 def track_beats(env, period, tightness=100.0):
-    """Ellis 的動態規劃拍點追蹤。"""
+    """Ellis's dynamic-programming beat tracker."""
     n = env.size
     local = env.copy()
-    # 用局部平均當基準，避免整首歌音量變化影響
+    # Use a local mean as the baseline to avoid effects from song-wide volume changes
     k = max(3, int(round(period * 2)))
     kernel = np.ones(k) / k
     local = np.maximum(local - np.convolve(local, kernel, mode='same'), 0.0)
@@ -249,7 +252,7 @@ def track_beats(env, period, tightness=100.0):
         cum[i] = local[i] + cand[b]
         link[i] = js[b]
 
-    # 從尾端分數高的地方往回走
+    # Backtrack from the highest-scoring point at the end
     tail_start = max(0, n - int(round(period * 2)))
     end = tail_start + int(np.argmax(cum[tail_start:]))
     beats = []
@@ -260,18 +263,19 @@ def track_beats(env, period, tightness=100.0):
     beats.reverse()
 
     if len(beats) < 4:
-        # 追不到就退回等距拍點
+        # Fall back to evenly spaced beats if tracking fails
         beats = list(range(0, n, max(2, int(round(period)))))
     return np.array(beats, dtype=int)
 
 
-# ---------------------------------------------------------------- 和弦
+# ---------------------------------------------------------------- Chords
 
 def build_templates(simplify=False):
-    """回傳 (模板, 根音, 品質名, 基本罰分, 三和音選擇矩陣, 延伸音選擇矩陣)。
+    """Return (templates, roots, quality names, base penalties, triad masks, extension masks).
 
-    simplify=True 時直接不建立延伸和弦的模板。用「給很大的罰分」來排除是錯的：
-    分數後面會做 z 標準化，那些極端負值會壓縮掉真正有意義的差距。
+    When simplify=True, do not create templates for extended chords. Excluding them
+    with a very large penalty is incorrect: scores are z-normalized later, and those
+    extreme negative values would compress the meaningful differences.
     """
     roots, quals, vecs, penalties = [], [], [], []
     tri_sel, ext_sel, mem_sel = [], [], []
@@ -291,7 +295,7 @@ def build_templates(simplify=False):
             if ext is not None:
                 e[(root + ext) % 12] = 1.0
 
-            # 和弦內所有音（判斷低音是不是和弦音用的）
+            # All chord tones (used to check whether the bass is a chord tone)
             m = np.zeros(12)
             for deg in degrees:
                 m[(root + deg) % 12] = 1.0
@@ -308,7 +312,7 @@ def build_templates(simplify=False):
 
 
 def beat_chroma(chroma, bass, beats):
-    """每拍取中位數色度；跳過起音瞬間，音色比較穩。"""
+    """Take median chroma for each beat; skip onset transients for a more stable timbre."""
     n = chroma.shape[1]
     out, out_bass = [], []
     for i in range(len(beats) - 1):
@@ -326,22 +330,24 @@ def beat_chroma(chroma, bass, beats):
         vb = np.median(segb, axis=1)
         nbb = np.linalg.norm(vb)
         out_bass.append(vb / nbb if nbb > 1e-9 else vb)
-    return np.array(out).T, np.array(out_bass).T  # (12 × 拍數)
+    return np.array(out).T, np.array(out_bass).T  # (12 × number of beats)
 
 
 def score_chords(bc, bb, vecs, roots, penalties, tri_sel, ext_sel, mem_sel,
                  bass_root_weight=0.0, bass_member_weight=0.10):
-    """每拍對每個和弦打分。分數已標準化成 z 分數，讓後面的平滑力道與錄音無關。"""
-    sim = vecs @ bc  # (和弦數 × 拍數)
-    # 低音加分不能只認根音：低音一旦是轉位音（G/B 的 B），
-    # 「低音=根音」的加分會把答案硬拉到 Bm/Cmaj7 去。實測 G/B 光看色度是對的，
-    # 加了根音加分才變錯。所以拆成兩份：根音給一點，「低音是和弦內任一個音」給多一點。
-    # bass_root_weight 預設 0：實測給根音加分**兩邊都變差**
-    # （原位測試集 94.9%→94.0%、轉位 75%→62.5%），所以不用。
+    """Score every chord for each beat. Scores are z-normalized so later smoothing is independent of the recording."""
+    sim = vecs @ bc  # (number of chords × number of beats)
+    # Bass bonuses should not only recognize the root: when the bass is an inversion
+    # tone (B in G/B), a "bass = root" bonus can force the result to Bm/Cmaj7.
+    # In testing, G/B was correct using chroma alone and became wrong only after adding
+    # a root bonus. So split the bonuses: a small one for the root and a larger one
+    # when the bass is any chord tone.
+    # bass_root_weight defaults to 0: testing showed a root bonus made both cases worse
+    # (root-position test set 94.9%→94.0%, inversions 75%→62.5%), so it is not used.
     sim = sim + bass_root_weight * bb[roots, :]
     sim = sim + bass_member_weight * (mem_sel @ bb).clip(max=1.0)
 
-    # 延伸音不夠突出就扣分（擋掉前一個和弦的延音殘留）
+    # Penalize extensions that are not prominent enough (to reject lingering tones from the previous chord)
     tri = tri_sel @ bc
     ext = ext_sel @ bc
     has_ext = ext_sel.sum(axis=1) > 0
@@ -351,7 +357,7 @@ def score_chords(bc, bb, vecs, roots, penalties, tri_sel, ext_sel, mem_sel,
 
     sim = sim - penalties[:, None] - dyn
 
-    # 沒有明確和弦的拍（能量太散）給 N.C. 一個保底分數
+    # Give N.C. a baseline score on beats without a clear chord (energy is too diffuse)
     nc = np.full((1, bc.shape[1]), float(np.median(sim)) * 0.72)
     sim = np.vstack([sim, nc])
 
@@ -362,10 +368,11 @@ def score_chords(bc, bb, vecs, roots, penalties, tri_sel, ext_sel, mem_sel,
 
 
 def viterbi(scores, stay_bonus=0.30):
-    """狀態就是和弦，留在原和弦有加分，避免每拍都在跳。
+    """Each state is a chord; reward staying on the same chord to avoid changing every beat.
 
-    scores 已是 z 分數，所以 stay_bonus 的單位是「幾個標準差」，
-    0.30 是在合成測試集上網格搜尋出來的（太大會整首歌卡在同一個和弦）。
+    Scores are already z-scores, so stay_bonus is measured in standard deviations.
+    0.30 was found by grid search on a synthetic test set (too large a value makes
+    the entire song stick to one chord).
     """
     n_states, n_frames = scores.shape
     dp = scores[:, 0].copy()
@@ -409,32 +416,33 @@ def detect_key(chroma):
 
 
 def _block_similarity(a, b):
-    """兩段小節的和弦排列有多像（0–1）。"""
+    """Similarity (0–1) between the chord sequences of two bar segments."""
     if len(a) != len(b) or not a:
         return 0.0
     same = sum(1 for x, y in zip(a, b) if x == y)
     return same / len(a)
 
 
-# 每種段落長度要多像才算同一段。
-# 4 小節不能放寬：4 中 3 相同（0.75）會讓循環樂句「錯開一格」也match，
-# 段落就會被切在錯的地方（實測 A-B-A 的第二個 A 被切成從第 12 小節開始）。
+# Required similarity for two segments to count as the same, by segment length.
+# Do not relax the threshold for 4 bars: 3 of 4 matching (0.75) also matches looped
+# phrases shifted by one bar, causing segments to split at the wrong place (in testing,
+# the second A in an A-B-A structure was split to start at bar 12).
 SECTION_MIN_MATCH = {16: 0.75, 8: 0.75, 4: 1.0}
 
 
 def detect_sections(bar_signatures, lengths=(16, 8, 4)):
-    """找出重複的段落，依出場順序標成 A / B / C…
+    """Find repeated sections and label them A / B / C… in order of appearance.
 
-    只認「重複出現」的段落，不去猜哪段是主歌哪段是副歌
-    （那要靠人耳或人工採譜，猜了只會誤導）。
+    Only identify sections that repeat; do not guess which is a verse or chorus
+    (that requires listening or manual transcription, and guessing would be misleading).
 
-    長段落用模糊比對：和弦本來就會聽錯幾個小節，
-    要求一模一樣的話真正的重複段幾乎都會被漏掉。
+    Use fuzzy matching for long sections: chord detection can get a few bars wrong,
+    so requiring an exact match would miss nearly all truly repeated sections.
     """
     n = len(bar_signatures)
     labels = [None] * n
-    reps = []    # 每個群組的代表段落（第一次出現的內容）
-    blocks = []  # 依位置排好的段落
+    reps = []    # Representative section for each group (its first occurrence)
+    blocks = []  # Sections sorted by position
 
     def is_empty(block):
         return all(s in ((), ('N.C.',)) for s in block)
@@ -457,7 +465,7 @@ def detect_sections(bar_signatures, lengths=(16, 8, 4)):
                     break
 
             if group is None:
-                # 後面還有類似的段落才算「段落」，只出現一次的不標
+                # Only label a section if a similar one appears later; do not label one-off sections
                 repeats_later = any(
                     _block_similarity(block, bar_signatures[j:j + L]) >= min_match
                     for j in range(i + L, n - L + 1)
@@ -476,7 +484,7 @@ def detect_sections(bar_signatures, lengths=(16, 8, 4)):
         if not placed:
             i += 1
 
-    # 依「第一次出場的順序」給字母，讀起來才是 A B C 而不是 A C B
+    # Assign letters in order of first appearance so the labels read A B C rather than A C B
     def label_name(idx):
         letter = chr(ord('A') + idx % 26)
         return letter if idx < 26 else f'{letter}{idx // 26 + 1}'
@@ -491,18 +499,19 @@ def detect_sections(bar_signatures, lengths=(16, 8, 4)):
     return named_labels, order
 
 
-# 轉位判定：低音明顯不是根音、而且是和弦內的音，才標成斜線和弦
-INVERSION_MIN_RATIO = 1.25   # 低音峰要比根音的低音強度高這麼多倍
-INVERSION_MIN_SHARE = 0.55   # 一段和弦裡要有這麼高比例的拍都指向同一個低音
+# Inversion detection: label a slash chord only when the bass is clearly not the root and is a chord tone
+INVERSION_MIN_RATIO = 1.25   # The bass peak must exceed the root's bass energy by this ratio
+INVERSION_MIN_SHARE = 0.55   # This share of beats in a chord segment must point to the same bass note
 
 
 def detect_inversions(path_states, bb, roots, quals, n_chords):
-    """判斷每一拍的低音是不是和弦的其他音（轉位）。
+    """Determine whether each beat's bass is another chord tone (an inversion).
 
-    回傳每拍的低音音級（沒有轉位就是 None）。
+    Return the bass pitch class for each beat (None if there is no inversion).
 
-    只在「整段和弦都指向同一個低音」時才標，逐拍判斷會抖得很厲害
-    （低音線本來就會走動，經過音不該被當成轉位）。
+    Label only when the entire chord segment points to the same bass note; beat-by-beat
+    decisions would be very unstable (the bass line naturally moves, and passing notes
+    should not be treated as inversions).
     """
     n_beats = len(path_states)
     out = [None] * n_beats
@@ -521,9 +530,10 @@ def detect_inversions(path_states, bb, roots, quals, n_chords):
             votes = {}
             for t in range(i, j + 1):
                 col = bb[:, t]
-                # 不能只看低音區「最強的那個音」——低音區很吵，最強的常常不是和弦音
-                # （實測 G/B 那段最強是 C，於是整段都被跳過）。
-                # 要看的是「和弦內的音裡面，哪一個在低音區最強」。
+                # Do not simply use the strongest note in the bass range—it is noisy,
+                # and the strongest note is often not a chord tone (in testing, C was
+                # strongest in the G/B section, causing the whole section to be skipped).
+                # Instead, find the strongest bass-range note among the chord tones.
                 cand = max(members, key=lambda pc: col[pc])
                 if cand == root:
                     continue
@@ -549,7 +559,7 @@ def _quality_degrees(quality):
 
 
 def find_downbeat(chord_ids, beats_per_bar=4):
-    """挑一個小節起點，讓和弦變化盡量落在第一拍。"""
+    """Choose a bar start so chord changes fall on the first beat as often as possible."""
     changes = [i for i in range(1, len(chord_ids)) if chord_ids[i] != chord_ids[i - 1]]
     if not changes:
         return 0
@@ -561,11 +571,11 @@ def find_downbeat(chord_ids, beats_per_bar=4):
     return best_off
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- Main pipeline
 
 def analyze(path, beats_per_bar=4, simplify=False, progress=None, inversions=True,
             downbeat=None):
-    """downbeat 給 None 就自動判第一拍位置；給 0..beats_per_bar-1 就照指定的切小節。"""
+    """If downbeat is None, detect the first-beat position automatically; otherwise, use 0..beats_per_bar-1 to split bars as specified."""
     def step(pct, msg):
         if progress:
             progress(pct, msg)
@@ -638,7 +648,7 @@ def analyze(path, beats_per_bar=4, simplify=False, progress=None, inversions=Tru
         chunk = per_beat[i:i + beats_per_bar]
         t0 = float(beat_times[i])
         t1 = float(beat_times[min(i + beats_per_bar, len(beat_times) - 1)])
-        # 一小節內把重複的和弦收起來，只留變化點
+        # Collapse repeated chords within a bar, keeping only change points
         slots = []
         for k, c in enumerate(chunk):
             if k == 0 or c['name'] != chunk[k - 1]['name']:
@@ -653,7 +663,7 @@ def analyze(path, beats_per_bar=4, simplify=False, progress=None, inversions=Tru
         bar_index += 1
         i += beats_per_bar
 
-    # 段落：把和弦排列一樣的小節群標成 A / B / C
+    # Sections: label groups of bars with matching chord progressions as A / B / C
     signatures = [tuple(dict.fromkeys(b['beats'])) for b in bars]
     labels, sections = detect_sections(signatures)
     for b, label in zip(bars, labels):
@@ -677,28 +687,29 @@ def analyze(path, beats_per_bar=4, simplify=False, progress=None, inversions=Tru
     }
 
 
-# ---------------------------------------------------------------- Solo 單音
-
-# 音域上限要和 MAX_FRET_MELODY 對得起來，否則會出現「這個音在吉他上按不到」的情況
+# ---------------------------------------------------------------- Solo melody
+# The upper pitch limit must be compatible with MAX_FRET_MELODY; otherwise, some notes cannot be played on the guitar
 MELODY_LO = 52   # E3
-MELODY_HI = 86   # D6 = 第一弦第 22 格
-MELODY_MIN_MS = 70      # 比這短的當雜訊丟掉
-MELODY_SILENCE = 0.42   # 顯著度低於這個就算沒有旋律
-MELODY_STEP_COST = 0.055  # 每個半音的跳動罰分（讓旋律線連貫、少亂跳八度）
+MELODY_HI = 86   # D6 = fret 22 on the first string
+MELODY_MIN_MS = 70      # Discard notes shorter than this as noise
+MELODY_SILENCE = 0.42   # Below this salience, treat as no melody
+MELODY_STEP_COST = 0.055  # Penalty per semitone of movement (keeps the melody line smooth and avoids octave jumps)
 
 
 def split_repeats(notes, env, fps=FPS, min_gap_ms=190, thresh=0.30, prominence=2.2, dip=1.6,
                   end_margin=2):
-    """把「同一個音連彈兩下」切開。
+    """Split repeated notes of the same pitch.
 
-    旋律追蹤是把連續同音高的框合併成一個音，所以 C-C 這種重複彈會變成一個長音。
-    用起音包絡在音的中間找重新彈奏的峰。
+    Melody tracking merges consecutive frames of the same pitch into one note, so a
+    repeated C-C would become one long note. Use the onset envelope to find a new
+    attack peak in the middle of the note.
 
-    判斷不能只看「有沒有超過某個門檻」——撥弦本身的音量起伏就會超過，
-    無伴奏的檔案會被切出一堆假音符（實測 40 個音被切成 47 個）。
-    所以要求峰同時滿足：
-      1. 明顯高過這個音自己的中位數能量（prominence）
-      2. 峰之前有先掉下來過（dip）——真正重新彈才會有這個凹陷
+    Do not decide based only on whether a threshold is exceeded—the natural volume
+    variation of a plucked note can exceed it, splitting an unaccompanied recording
+    into many false notes (in testing, 40 notes became 47).
+    Require each peak to satisfy both:
+      1. It is clearly above the note's own median energy (prominence).
+      2. Energy dips before the peak (dip)—a genuine re-attack creates this valley.
     """
     if not notes or env is None or env.size == 0:
         return notes
@@ -709,8 +720,9 @@ def split_repeats(notes, env, fps=FPS, min_gap_ms=190, thresh=0.30, prominence=2
         a = int(round(note['start'] * fps))
         b = min(int(round(note['end'] * fps)), env.size - 1)
         cuts = []
-        # 尾端多留一段不搜尋：追蹤器換音時會慢幾格，下一個音的起音會落在
-        # 這個音的範圍末尾，不留 margin 就會被誤判成「同一個音再彈一次」
+        # Leave a margin at the end of the search: the tracker is a few frames late
+        # when changing notes, so the next note's onset falls near the end of this
+        # note's range. Without a margin, it can be mistaken for a repeated note.
         if b - a > min_gap * (1 + end_margin):
             base = float(np.median(env[a:b])) + 1e-6
             for t in range(a + min_gap, b - end_margin * min_gap + 1):
@@ -720,7 +732,7 @@ def split_repeats(notes, env, fps=FPS, min_gap_ms=190, thresh=0.30, prominence=2
                 hi = min(env.size, t + min_gap // 2 + 1)
                 if env[t] < env[lo:hi].max():
                     continue
-                # 峰前面要先有凹陷，才算「放掉再彈」
+                # A dip must precede the peak to count as a release and re-attack
                 valley = float(env[lo:t].min()) if t > lo else env[t]
                 if env[t] < valley * dip:
                     continue
@@ -738,12 +750,14 @@ def split_repeats(notes, env, fps=FPS, min_gap_ms=190, thresh=0.30, prominence=2
 
 
 def track_melody(Ph, fps=FPS):
-    """抓出最突出的單音旋律線。
+    """Extract the most prominent monophonic melody line.
 
-    做法是在旋律音域內取「泛音疊加後最顯著的音」，再用 Viterbi 讓它連貫，
-    另外加一個「無旋律」狀態，沒人在拉單音的地方就留白。
+    Select the most salient note in the melody range after harmonic summation, then
+    use Viterbi to keep it coherent. Include a "no melody" state so passages without
+    a monophonic lead remain blank.
 
-    這招在獨奏吉他、清楚的主奏上還可以；整團混音（尤其有人聲）會明顯變差。
+    This works reasonably well for solo guitar and clear lead parts; it performs
+    noticeably worse on full-band mixes (especially with vocals).
     """
     lo = MELODY_LO - MIDI_LO
     hi = MELODY_HI - MIDI_LO + 1
@@ -753,13 +767,13 @@ def track_melody(Ph, fps=FPS):
 
     peak = band.max(axis=0)
     peak[peak < 1e-9] = 1.0
-    sal = band / peak  # 每一框正規化到 0–1
+    sal = band / peak  # Normalize each frame to 0–1
 
     n_pitch, n_frames = sal.shape
-    # 狀態 = n_pitch 個音 + 1 個「無旋律」
+    # States = n_pitch notes + 1 "no melody" state
     emit = np.vstack([sal, np.full((1, n_frames), MELODY_SILENCE)])
 
-    # 音高之間的跳動罰分；進出「無旋律」給固定小罰分
+    # Penalty for pitch jumps; apply a fixed small penalty when entering or leaving "no melody"
     idx = np.arange(n_pitch)
     step = np.abs(idx[:, None] - idx[None, :]) * MELODY_STEP_COST
     trans = np.zeros((n_pitch + 1, n_pitch + 1))
@@ -770,7 +784,7 @@ def track_melody(Ph, fps=FPS):
     dp = emit[:, 0].copy()
     back = np.zeros((n_pitch + 1, n_frames), dtype=np.int32)
     for t in range(1, n_frames):
-        # cand[j, i] = 從 j 走到 i 的分數
+        # cand[j, i] = score for transitioning from j to i
         cand = dp[:, None] - trans
         best = np.argmax(cand, axis=0)
         back[:, t] = best
@@ -781,7 +795,7 @@ def track_melody(Ph, fps=FPS):
     for t in range(n_frames - 1, 0, -1):
         path[t - 1] = back[path[t], t]
 
-    # 連續同音合併成一個音符
+    # Merge consecutive frames of the same pitch into one note
     notes = []
     cur_pitch, cur_start = None, 0
     for t, state in enumerate(list(path) + [n_pitch]):
@@ -800,11 +814,11 @@ def track_melody(Ph, fps=FPS):
 
 
 def quantize_melody(notes, beat_times, subdivision=4):
-    """把音符對齊到節拍網格（預設十六分音符），並算出每個音佔幾個格子。"""
+    """Align notes to the beat grid (sixteenth notes by default) and calculate how many grid slots each note occupies."""
     if not notes or len(beat_times) < 2:
         return []
 
-    # 建出細分後的網格時間
+    # Build the subdivided grid timestamps
     grid = []
     for i in range(len(beat_times) - 1):
         a, b = beat_times[i], beat_times[i + 1]
@@ -820,7 +834,8 @@ def quantize_melody(notes, beat_times, subdivision=4):
     last_grid = -1
     for note in notes:
         g0 = nearest(note['start'])
-        # 撞到同一格就往後挪一格，不要直接丟掉——丟掉會讓後面整串音都對錯位置
+        # If two notes land on the same slot, move the later one forward rather than
+        # dropping it; dropping it would shift the alignment of all subsequent notes.
         g0 = max(g0, last_grid + 1)
         if g0 >= len(grid) - 1:
             break
@@ -833,19 +848,19 @@ def quantize_melody(notes, beat_times, subdivision=4):
         })
         last_grid = g0
 
-    # 前一個音的長度不能蓋到下一個音
+    # A note's duration must not overlap the next note
     for i in range(len(out) - 1):
         out[i]['units'] = max(1, min(out[i]['units'], out[i + 1]['grid'] - out[i]['grid']))
     return out
 
 
-# 標準調弦，index 0 = 第1弦（細）
+# Standard tuning; index 0 = first (thinnest) string
 TUNING = [64, 59, 55, 50, 45, 40]
 MAX_FRET_MELODY = 22
 
 
 def assign_frets(notes, max_span=4):
-    """把 MIDI 音高排到弦與格上，盡量讓左手少移動（動態規劃）。"""
+    """Map MIDI pitches to strings and frets while minimizing left-hand movement (dynamic programming)."""
     if not notes:
         return notes
 
@@ -857,8 +872,9 @@ def assign_frets(notes, max_span=4):
                 out.append((s, fret))
         return out
 
-    # 按不到的音直接丟掉。以前是塞一個 (1,0) 當預設，結果會產生
-    # 「B5 標在第1弦第0格」這種音高和位置對不起來的假資料。
+    # Discard notes that cannot be played. Previously, (1, 0) was inserted as a
+    # default, producing false data such as "B5 at first string, fret 0," where the
+    # pitch and position do not match.
     playable = [(n, options(n['midi'])) for n in notes]
     playable = [(n, o) for n, o in playable if o]
     if not playable:
@@ -866,8 +882,8 @@ def assign_frets(notes, max_span=4):
     notes = [n for n, _o in playable]
     all_opts = [o for _n, o in playable]
 
-    # dp[i][j] = 第 i 個音用第 j 個選項的最小成本
-    prev_cost = [abs(f - 5) * 0.15 for (_s, f) in all_opts[0]]  # 起手偏好第5格附近
+    # dp[i][j] = minimum cost of assigning the j-th option to the i-th note
+    prev_cost = [abs(f - 5) * 0.15 for (_s, f) in all_opts[0]]  # Prefer starting near fret 5
     prev_choice = [[j] for j in range(len(all_opts[0]))]
 
     for i in range(1, len(notes)):
@@ -875,9 +891,10 @@ def assign_frets(notes, max_span=4):
         for j, (s, f) in enumerate(all_opts[i]):
             best_val, best_k = None, 0
             for k, (ps, pf) in enumerate(all_opts[i - 1]):
-                # 手不要跑太遠；換弦有一點成本；同一格附近最好。
-                # 另外加一點「低把位偏好」：只罰移動的話整條旋律會一路往高把位飄，
-                # 明明低把位也彈得出來（實測會跑到 12–17 格）。
+                # Avoid large hand shifts; changing strings has a small cost; nearby frets are preferable.
+                # Also add a slight preference for lower positions: penalizing movement
+                # alone lets the whole melody drift to higher frets even when it could
+                # be played lower (in testing, it drifted to frets 12–17).
                 move = abs(f - pf)
                 penalty = prev_cost[k] + move * 0.28 + (0.06 if s != ps else 0) + f * 0.035
                 if move > max_span:
@@ -897,7 +914,7 @@ def assign_frets(notes, max_span=4):
 
 
 def analyze_melody(path, beats_per_bar=4, subdivision=4, progress=None):
-    """音檔 → solo 單音（含弦與格）。"""
+    """Audio file → solo notes (including strings and frets)."""
     def step(pct, msg):
         if progress:
             progress(pct, msg)

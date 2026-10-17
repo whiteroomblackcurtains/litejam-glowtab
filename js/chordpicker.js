@@ -1,7 +1,7 @@
-// 和弦盤：自己點和弦，右邊列出這個和弦在每個把位的指型
+// Chord picker: choose a chord to see its voicings at each position on the right.
 //
-// 點任何一個指型就會亮到琴上（和螢幕指板上）。
-// 下面那條「我的和弦進行」可以把點過的和弦排起來，存在瀏覽器裡，關掉再開還在。
+// Click any voicing to light it up on the guitar and the on-screen fretboard.
+// Use "My Chord Progression" below to arrange selected chords; it is saved in the browser and persists between visits.
 
 import { allVoicings, chordColorClass, diagramSvg, parseChord } from './chords.js';
 
@@ -47,12 +47,12 @@ export class ChordPicker {
     return this.root + this.suffix;
   }
 
-  /** 從外面指定要看哪個和弦，例如從和弦譜點過來 */
+  /** Set which chord to display from outside, for example when selected from a chord chart. */
   select(name) {
     const parsed = parseChord(name);
     if (!parsed) return false;
     this.root = ROOTS[parsed.root];
-    // 這裡只收和弦盤上有的種類，其他（例如轉位）就退回大三和弦
+    // Only accept chord types supported by the picker; fall back to a major triad for others (such as inversions).
     this.suffix = QUALITIES.some((q) => q.suffix === parsed.suffix) ? parsed.suffix : '';
     this.update();
     return true;
@@ -71,11 +71,11 @@ export class ChordPicker {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(this.progression));
     } catch {
-      /* 私密瀏覽模式寫不進去，不影響操作 */
+      /* Private browsing may prevent saving; this does not affect operation. */
     }
   }
 
-  // ------------------------------------------------------------ 建立骨架
+  // ------------------------------------------------------------ Build the structure
 
   _build() {
     this.el.innerHTML = `
@@ -155,7 +155,7 @@ export class ChordPicker {
     this.el.querySelector('.pk-export').addEventListener('click', () => this.exportText());
   }
 
-  // ------------------------------------------------------------ 更新畫面
+  // ------------------------------------------------------------ Update the display
 
   update() {
     for (const b of this.rootsEl.children) {
@@ -253,7 +253,7 @@ export class ChordPicker {
     for (const c of this.progression) {
       const tab = c.frets
         .slice()
-        .reverse() // 文字譜習慣由第6弦寫到第1弦
+        .reverse() // Tablature convention lists strings from string 6 to string 1.
         .map((f) => (f === null ? 'x' : String(f)))
         .join('-');
       lines.push(`${c.name.padEnd(7)} ${tab}   (leftmost number is the 6th string)`);

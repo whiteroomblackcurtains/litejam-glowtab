@@ -1,15 +1,15 @@
-// LiteJam LED 吉他 — Web Bluetooth 連線與燈控
+// LiteJam LED guitar — Web Bluetooth connection and lighting control
 //
-// 協定（由 glowtab.litejam.com 前端程式碼分析而得）
-//   Service 0x00FF 狀態：0xFF01 模式 / 0xFF02 電量% / 0xFF03 實體按鈕（皆可 notify）
-//   Service 0x00EE 控制：0xEE01 LED模式(1B) / 0xEE02 Pattern(4B) / 0xEE03 Party(10B)
-//                        0xEE04 Segment(燈組, >=4B) / 0xEE05 SoundReact(9B) / 0xEE06 SoundReactData(1B)
+// Protocol (reverse-engineered from the glowtab.litejam.com frontend)
+//   Service 0x00FF status: 0xFF01 mode / 0xFF02 battery % / 0xFF03 physical buttons (all support notify)
+//   Service 0x00EE control: 0xEE01 LED mode (1B) / 0xEE02 Pattern (4B) / 0xEE03 Party (10B)
+//                           0xEE04 Segment (LED group, >=4B) / 0xEE05 SoundReact (9B) / 0xEE06 SoundReactData (1B)
 //
-//   Segment 封包格式：
-//     [群組數]
-//       每組：[本組燈數] ([格號][弦bitmask]) x N [R][G][B]
-//     結尾三碼 0x45 0x4E 0x44 ("END")
-//   弦 bitmask：bit0 = 第1弦 … bit5 = 第6弦（0x3F = 全六弦）
+//   Segment packet format:
+//     [number of groups]
+//       Each group: [number of LEDs in group] ([fret][string bitmask]) x N [R][G][B]
+//     Three-byte terminator: 0x45 0x4E 0x44 ("END")
+//   String bitmask: bit0 = string 1 … bit5 = string 6 (0x3F = all six strings)
 
 const SVC_STATUS = 0x00ff;
 const SVC_CONTROL = 0x00ee;
@@ -26,15 +26,15 @@ const CHR = {
   SOUND_REACT_DATA: 0xee06,
 };
 
-// 這把琴不在廣播裡帶服務 UUID，所以只能用「名稱開頭」當過濾條件。
-// 列出所有英數開頭即可涵蓋實務上的裝置名稱（Web Bluetooth 規定必須給 filters）。
+// This guitar does not advertise service UUIDs, so filter by name prefix instead.
+// Matching all alphanumeric prefixes should cover real-world device names (Web Bluetooth requires filters).
 const NAME_PREFIXES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   .split('')
   .map((c) => ({ namePrefix: c }));
 
 export const MAX_FRET = 24;
 
-/** 把 {r,g,b} 乘上亮度並夾在 0–255 */
+/** Scale {r,g,b} by brightness and clamp each channel to 0–255. */
 export function scaleColor(color, brightness = 1) {
   const c = (v) => Math.max(0, Math.min(255, Math.round(v * brightness)));
   return { r: c(color.r), g: c(color.g), b: c(color.b) };
@@ -48,11 +48,11 @@ export function hexToRgb(hex) {
 }
 
 /**
- * 把燈組編碼成 Segment 位元組。
+ * Encode an LED group as Segment bytes.
  * @param {Array<{leds: Array<{fret:number, strings:number[]}>, color:{r:number,g:number,b:number}}>} groups
  */
 export function encodeSegment(groups) {
-  let size = 4; // 群組數 1 byte + 結尾 "END" 3 bytes
+  let size = 4; // 1 byte for the group count + 3 bytes for the "END" terminator
   for (const g of groups) size += 1 + g.leds.length * 2 + 3;
 
   const buf = new Uint8Array(size);
@@ -78,7 +78,7 @@ export function encodeSegment(groups) {
   return buf;
 }
 
-/** 同一格上的多條弦合併成一筆，並依格號排序（封包更短、寫入更快） */
+/** Merge multiple strings at the same fret into one entry and sort by fret (smaller packets, faster writes). */
 export function packNotes(notes) {
   const byFret = new Map();
   for (const n of notes) {
@@ -109,7 +109,7 @@ export class LiteJam extends EventTarget {
     this._server = null;
     this._chr = {};
     this._writeChain = Promise.resolve();
-    this._pending = new Map(); // 每個 characteristic 只保留最新的一筆待寫入資料
+    this._pending = new Map(); // Keep only the latest pending write for each characteristic.
     this._lastSegmentHex = '';
   }
 
@@ -148,7 +148,7 @@ export class LiteJam extends EventTarget {
 
       this._server = await device.gatt.connect();
 
-      // 狀態服務（模式 / 電量 / 按鈕）
+      // Status service (mode / battery / buttons)
       try {
         const svc = await this._server.getPrimaryService(SVC_STATUS);
         const mode = await svc.getCharacteristic(CHR.MODE);
@@ -163,7 +163,7 @@ export class LiteJam extends EventTarget {
           this.button = (await button.readValue()).getUint8(0);
           this._emit('state', this.snapshot());
         } catch {
-          /* 讀不到初始值不影響燈控 */
+          /* Failing to read the initial value does not affect lighting control. */
         }
 
         const onNotify = (ev) => {
@@ -182,14 +182,14 @@ export class LiteJam extends EventTarget {
             await chr.startNotifications();
             chr.addEventListener('characteristicvaluechanged', onNotify);
           } catch {
-            /* 部分固件不支援 notify */
+            /* Some firmware does not support notify. */
           }
         }
       } catch {
         this.hasStatus = false;
       }
 
-      // 控制服務（燈）
+      // Control service (lights)
       try {
         const svc = await this._server.getPrimaryService(SVC_CONTROL);
         this._chr.ledMode = await svc.getCharacteristic(CHR.LED_MODE);
@@ -221,7 +221,7 @@ export class LiteJam extends EventTarget {
       return this.snapshot();
     } catch (err) {
       if (err?.name === 'NotFoundError') {
-        // 使用者自己按取消，不算錯誤
+        // User-initiated cancellation is not an error.
         this._reset();
         return null;
       }
@@ -270,9 +270,9 @@ export class LiteJam extends EventTarget {
   }
 
   /**
-   * 寫入佇列。BLE 一次只能有一個 GATT 操作在進行，同時寫會丟
-   * "GATT operation already in progress"；而且燈只在乎「最新狀態」，
-   * 所以同一個 characteristic 的舊資料直接丟掉、只留最後一筆。
+   * Queue writes. BLE allows only one GATT operation at a time; concurrent writes
+   * throw "GATT operation already in progress". Since the lights only care about
+   * the latest state, discard stale data for the same characteristic and keep only the newest write.
    */
   _write(key, data) {
     if (this.status !== 'connected') return Promise.resolve(false);
@@ -295,7 +295,7 @@ export class LiteJam extends EventTarget {
     return this._writeChain;
   }
 
-  /** LED 模式：0 = 全部關燈 / 交還控制權 */
+  /** LED mode: 0 = turn all lights off / relinquish control. */
   setLedMode(mode) {
     return this._write('ledMode', new Uint8Array([mode & 0xff]));
   }
@@ -305,7 +305,7 @@ export class LiteJam extends EventTarget {
     return this.setLedMode(0);
   }
 
-  /** 送出燈組；內容和上一次完全相同時直接跳過，省藍牙頻寬 */
+  /** Send an LED group; skip it if identical to the previous one to save Bluetooth bandwidth. */
   sendSegment(groups) {
     const valid = groups.filter((g) => g.leds.length > 0);
     if (valid.length === 0) return this.ledOff();
@@ -316,7 +316,7 @@ export class LiteJam extends EventTarget {
     return this._write('segment', payload);
   }
 
-  /** 便利函式：一批音 + 單一顏色 */
+  /** Convenience method: a set of notes + a single color. */
   sendNotes(notes, color) {
     return this.sendSegment([{ leds: packNotes(notes), color }]);
   }

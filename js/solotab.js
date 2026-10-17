@@ -1,12 +1,12 @@
-// 把抓出來的 solo 單音變成 alphaTex，交給 alphaTab 渲染成真正的六線譜。
+// Convert the extracted solo notes into alphaTex and let alphaTab render them as standard notation and tablature.
 //
-// 這樣做的好處是譜面、游標、播放、亮燈全部沿用既有的樂譜模式，
-// 不用另外寫一套渲染器；出來的樣子就是 Guitar Pro 那個樣子。
+// This lets us reuse the existing score mode for the score, cursor, playback, and note highlighting,
+// instead of writing a separate renderer; the result looks like Guitar Pro.
 //
-// alphaTex 音符語法：`格.弦.長度`，休止是 `r.長度`，小節用 `|` 分隔。
-// 長度是 1/2/4/8/16/32（全/二分/四分/八分/十六分）。
+// alphaTex note syntax: `fret.string.duration`; rests use `r.duration`, and bars are separated by `|`.
+// Durations are 1/2/4/8/16/32 (whole/half/quarter/eighth/sixteenth notes).
 
-/** 幾個十六分音符 → alphaTex 的長度數字（取最接近且不超過的那個） */
+/** Convert a number of sixteenth-note units to an alphaTex duration (the closest value not exceeding it). */
 function unitsToDuration(units) {
   if (units >= 16) return 1;
   if (units >= 8) return 2;
@@ -15,7 +15,7 @@ function unitsToDuration(units) {
   return 16;
 }
 
-/** 把長度拆成幾個可寫出來的音值（例如 3 個十六分 = 8 分 + 16 分） */
+/** Split a duration into writable note values (for example, 3 sixteenth notes = an eighth + a sixteenth). */
 function splitUnits(units) {
   const out = [];
   let left = Math.max(1, Math.round(units));
@@ -54,9 +54,9 @@ export function melodyToTex(melody) {
 
   if (!notes.length) return `${head}\nr.1 |`;
 
-  // 依小節鋪開，空的地方補休止符
+  // Lay out the notes bar by bar, filling empty spaces with rests.
   const bars = [];
-  let cursor = 0; // 目前寫到第幾個十六分格
+  let cursor = 0; // Current position in sixteenth-note units.
   const lastEnd = notes[notes.length - 1].grid + notes[notes.length - 1].units;
   const barCount = Math.max(1, Math.ceil(lastEnd / unitsPerBar));
 
@@ -69,19 +69,19 @@ export function melodyToTex(melody) {
 
     while (idx < notes.length && notes[idx].grid < barEnd) {
       const note = notes[idx];
-      // 音符前面的空隙補休止
+      // Fill the gap before the note with rests.
       if (note.grid > cursor) {
         for (const d of splitUnits(Math.min(note.grid, barEnd) - cursor)) {
           beats.push(`r.${unitsToDuration(d)}`);
         }
         cursor = note.grid;
       }
-      // 音符本身不跨小節（跨的話截到小節線）
+      // Notes do not cross bar lines; truncate them at the bar line if necessary.
       const len = Math.max(1, Math.min(note.units, barEnd - note.grid));
-      // 拆成多個音值時，第二段之後用連結線接起來，
-      // 不然一個長音會被寫成連續彈好幾下（譜上音符數會多出一堆）。
-      // 連結線的語法是 `-.弦.長度`，弦號不能省——寫成 `-.長度` 的話
-      // alphaTex 會把長度當成弦號，然後噴「Note string is out of range」。
+      // When splitting a duration into multiple note values, tie every segment after the first,
+      // otherwise a sustained note would be written as several repeated attacks (adding extra notes to the score).
+      // Tie syntax is `-.string.duration`; the string number is required. If written as `-.duration`,
+      // alphaTex interprets the duration as a string number and throws "Note string is out of range".
       splitUnits(len).forEach((d, i) => {
         const dur = unitsToDuration(d);
         beats.push(i === 0 ? `${note.fret}.${note.string}.${dur}` : `-.${note.string}.${dur}`);
@@ -100,7 +100,7 @@ export function melodyToTex(melody) {
   return `${head}\n${bars.join(' |\n')} |`;
 }
 
-/** 給人看的統計，顯示在 toast 上 */
+/** Human-readable summary, displayed in a toast. */
 export function melodySummary(melody) {
   const notes = melody.notes ?? [];
   if (!notes.length) return 'No clear single-note melody found.';

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""LiteJam 燈譜的本機伺服器。
+"""LiteJam tab-chart local server.
 
-除了送出網頁本身，還多了兩件瀏覽器做不到的事：
-  POST /api/analyze?name=…   上傳音檔 → 自動抓和弦
-  POST /api/youtube          給 YouTube 連結 → 抓音訊 → 自動抓和弦
-  GET  /api/job/<id>         查進度（分析與下載都在背景執行緒跑）
+In addition to serving the web app, it handles two tasks browsers cannot:
+  POST /api/analyze?name=…   Upload audio → detect chords automatically
+  POST /api/youtube          Accept a YouTube link → download audio → detect chords
+  GET  /api/job/<id>         Check progress (analysis and downloads run in background threads)
 
-只綁 127.0.0.1，不對外開放。
+Bound only to 127.0.0.1; not exposed externally.
 """
 
 import hashlib
@@ -48,8 +48,9 @@ MEDIA.mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / 'chords'))
 _chord_analyzer = None
 
-# 前端會拿這個和自己的常數比對。加了新的 API 就把它 +1，
-# 這樣「網頁是新的、伺服器還是舊的」會直接講出來，而不是丟一個看不懂的錯誤。
+# The frontend compares this with its own constant. Increment it when adding an API
+# so a version mismatch ("new web app, old server") is reported clearly instead of
+# producing an incomprehensible error.
 API_VERSION = 9
 
 PORT = int(os.environ.get('PORT', '8123'))
@@ -62,7 +63,7 @@ SESSION_COOKIE = 'litejam_session'
 OAUTH_STATE_COOKIE = 'litejam_oauth_state'
 COOKIE_SECURE = urlsplit(BASE_URL).scheme == 'https'
 MAX_UPLOAD = 200 * 1024 * 1024  # 200MB
-JOB_TTL = 3600  # 一小時後清掉舊工作
+JOB_TTL = 3600  # Remove old jobs after one hour
 
 _jobs = {}
 _jobs_lock = threading.Lock()
@@ -130,7 +131,7 @@ def find_ytdlp():
 
 
 def download_audio(url, job_id):
-    """用 yt-dlp 抓音訊。直接拿 m4a，不重新編碼（省時間也不需要額外工具）。"""
+    """Download audio with yt-dlp. Get m4a directly without re-encoding (faster, no extra tools needed)."""
     ytdlp = find_ytdlp()
     if not ytdlp:
         raise RuntimeError(
@@ -150,7 +151,7 @@ def download_audio(url, job_id):
         '--no-playlist',
         '--no-warnings',
         '--newline',
-        '--progress',  # 不是終端機時預設不印進度，要明確要求才有進度條可解析
+        '--progress',  # Progress is not printed by default when not in a terminal; request it explicitly so the progress bar can be parsed
         '--print-json',
         '-f', 'bestaudio[ext=m4a]/bestaudio/best',
         '-o', str(MEDIA / f'{key}.%(ext)s'),
@@ -197,7 +198,7 @@ def download_audio(url, job_id):
 
 
 def search_youtube(query, limit=8):
-    """打歌名找歌。回傳候選清單讓使用者自己挑，不自動決定。"""
+    """Search for a song by title. Return candidates for the user to choose from; do not choose automatically."""
     ytdlp = find_ytdlp()
     if not ytdlp:
         raise RuntimeError('yt-dlp was not found; search is unavailable.')
@@ -223,7 +224,7 @@ def search_youtube(query, limit=8):
         except Exception:
             continue
         if d.get('live_status') == 'is_live':
-            continue  # 直播沒有固定長度，分析不了
+            continue  # Live streams have no fixed duration and cannot be analyzed
         thumbs = d.get('thumbnails') or []
         out.append({
             'id': d.get('id'),
@@ -238,10 +239,12 @@ def search_youtube(query, limit=8):
 
 
 def to_pinyin(lines, style='tone'):
-    """把使用者自己貼進來的中文歌詞逐行轉成拼音對照。
+    """Convert Chinese lyrics pasted by the user into a line-by-line pinyin guide.
 
-    只做「文字 → 讀音」的機械轉換，不去任何地方抓歌詞。
-    多音字會有錯（例如「重來」會轉成 zhòng lái），所以前端讓人可以手改。
+    This only performs a mechanical "text → pronunciation" conversion; it does not
+    fetch lyrics from anywhere.
+    Polyphonic characters may be converted incorrectly because a character can have
+    multiple readings, so the frontend lets users edit the result.
     """
     try:
         from pypinyin import Style, pinyin
@@ -261,7 +264,7 @@ def to_pinyin(lines, style='tone'):
         if not text:
             out.append('')
             continue
-        # heteronym=False：一個字只給一個讀音，對照才對得整齊
+        # heteronym=False: give each character only one pronunciation so the guide stays aligned
         syllables = pinyin(text, style=st, heteronym=False, errors=lambda x: [[c] for c in x])
         out.append(' '.join(s[0] for s in syllables if s and s[0]))
     return out
@@ -277,7 +280,7 @@ def _read_title(key):
     return None
 
 
-# ---------------------------------------------------------------- 背景工作
+# ---------------------------------------------------------------- Background jobs
 
 def run_analysis(job_id, path, title, beats_per_bar, simplify, base_progress=35, video_id=None):
     def progress(pct, msg):
@@ -287,7 +290,7 @@ def run_analysis(job_id, path, title, beats_per_bar, simplify, base_progress=35,
     result = chord_analyzer().analyze(str(path), beats_per_bar, simplify, progress)
     result['title'] = title
     result['media'] = f'/media/{path.name}'
-    # 有影片 ID 的話前端可以嵌 YouTube 播放器，讓譜跟著影片跑
+    # If there is a video ID, the frontend can embed a YouTube player and sync the chart to the video
     result['videoId'] = video_id
     set_job(job_id, state='done', progress=100, message='Complete', result=result)
 
@@ -301,7 +304,7 @@ def job_upload(job_id, path, title, beats_per_bar, simplify):
         set_job(job_id, state='error', message=str(exc))
 
 
-# Demucs 的 6 軌模型，剛好對得上樂團編制
+# Demucs's 6-stem model, which maps neatly to a typical band lineup
 STEM_LABELS = {
     'vocals': 'Vocals',
     'drums': 'Drums',
@@ -319,7 +322,7 @@ def python_bin():
 
 
 def separate_stems(path, job_id):
-    """用 Demucs 把歌拆成 6 軌。回傳 {軌名: 檔案路徑}。"""
+    """Split a song into 6 stems with Demucs. Return {stem name: file path}."""
     out_dir = MEDIA / 'stems' / path.stem
     expected = {k: out_dir / DEMUCS_MODEL / path.stem / f'{k}.wav' for k in STEM_LABELS}
     if all(p.exists() for p in expected.values()):
@@ -330,7 +333,7 @@ def separate_stems(path, job_id):
     cmd = [
         python_bin(), '-m', 'demucs',
         '-n', DEMUCS_MODEL,
-        '-d', 'mps',            # Apple Silicon 的 GPU，比 CPU 快很多
+        '-d', 'mps',            # Apple Silicon GPU, much faster than the CPU
         '--out', str(out_dir),
         str(path),
     ]
@@ -350,12 +353,13 @@ def separate_stems(path, job_id):
         detail = '\n'.join(tail[-4:]) or 'Unknown error'
         low = detail.lower()
 
-        # 寫檔後端缺了就直接講，別誤導成「GPU 失敗」——分軌其實已經算完，
-        # 是 torchaudio 2.8 沒有可用的輸出後端（實際踩過這個坑）
+        # Report a missing audio-writing backend directly; do not mislead the user
+        # into thinking the GPU failed. Stem separation has completed, but torchaudio
+        # 2.8 has no usable output backend (this has occurred in practice).
         if 'backend' in low or 'soundfile' in low:
             raise RuntimeError('Stem separation finished, but audio files could not be written. Run: pip3 install --user soundfile')
 
-        # 真的是 GPU 的問題才退回 CPU 重跑（會慢很多）
+        # Retry on the CPU (much slower) only if the GPU itself is actually the problem
         if 'mps' in low or 'metal' in low or 'out of memory' in low:
             set_job(job_id, progress=10, message='GPU unavailable; retrying on CPU (this will take longer)')
             cmd[cmd.index('mps')] = 'cpu'
@@ -392,7 +396,7 @@ def job_stems(job_id, path):
 
 
 def vocals_only(path, job_id):
-    """只分出人聲（比 6 軌快）。已經有 6 軌結果就直接用裡面的 vocals。"""
+    """Separate vocals only (faster than 6 stems). If 6-stem results already exist, use their vocals stem."""
     six = MEDIA / 'stems' / path.stem / DEMUCS_MODEL / path.stem / 'vocals.wav'
     if six.exists():
         return six
@@ -428,15 +432,17 @@ def vocals_only(path, job_id):
 
 _whisper_cache = {}
 
-# 分離出來的人聲軌能量低於這個比例，就當作「這首沒有人聲」
+# If the separated vocal stem's energy is below this ratio, treat the song as having no vocals
 VOCAL_PRESENCE_MIN = 0.06
 
 
 def vocal_presence(vocals_path, mix_path):
-    """人聲軌相對於原曲的能量比。
+    """Energy ratio of the vocal stem relative to the original track.
 
-    Whisper 對非語音音訊會「自信地亂編」——實測純吉他演奏曲被它生出 76 句歌詞。
-    所以辨識前先確認真的有人在唱，不然就直接說沒有。
+    Whisper can "confidently make things up" for non-speech audio—in testing, it
+    generated 76 lyric lines for an instrumental guitar track.
+    Check that someone is actually singing before transcription; otherwise report
+    that there are no vocals.
     """
     import numpy as np
 
@@ -452,14 +458,14 @@ def vocal_presence(vocals_path, mix_path):
 
 
 def drop_hallucinations(segments):
-    """丟掉信心太低的句子（Whisper 亂編的通常這幾個指標很差）。"""
+    """Discard low-confidence segments (Whisper's fabrications usually score poorly on these metrics)."""
     out = []
     for seg in segments:
         if seg.get('no_speech_prob', 0) > 0.6:
             continue
         if seg.get('avg_logprob', 0) < -1.0:
             continue
-        # 同一句話重複刷屏也是典型的亂編
+        # Repeating the same phrase over and over is another typical fabrication
         if seg.get('compression_ratio', 0) > 2.4:
             continue
         out.append(seg)
@@ -467,7 +473,7 @@ def drop_hallucinations(segments):
 
 
 def transcribe_vocals(wav_path, job_id, model_name='small', language='zh'):
-    """對分離出來的人聲跑語音辨識，拿到帶時間的句子。"""
+    """Transcribe the separated vocal stem and return timestamped segments."""
     try:
         import whisper
     except ImportError:
@@ -483,8 +489,8 @@ def transcribe_vocals(wav_path, job_id, model_name='small', language='zh'):
         str(wav_path),
         language=language or None,
         task='transcribe',
-        # 用繁體中文的提示詞把輸出帶往繁體，不然 zh 常常吐簡體
-        initial_prompt='以下是這首歌的繁體中文歌詞。',
+        # Ask for Traditional Chinese output; otherwise, zh often produces Simplified Chinese.
+        initial_prompt='Transcribe the lyrics of this song in Traditional Chinese.',
         condition_on_previous_text=False,
         temperature=0.0,
         no_speech_threshold=0.5,
@@ -526,9 +532,10 @@ def job_auto_lyrics(job_id, path, model_name, language):
 
 
 def job_rechord(job_id, path, title, beats_per_bar, simplify, downbeat, video_id):
-    """用已經抓下來的音檔重新分析和弦（例如手動改了第一拍的位置）。
+    """Re-analyze chords from an already downloaded audio file (for example, after manually changing the downbeat).
 
-    音檔已經在本機了，所以這步只有分析（約 0.4 秒／3 分鐘的歌），不用重新下載。
+    The audio file is already local, so this step only analyzes it (about 0.4 seconds
+    for a 3-minute song); it does not need to be downloaded again.
     """
     try:
         set_job(job_id, state='running', progress=5, message='Reanalyzing chords')
@@ -599,14 +606,14 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def log_message(self, fmt, *args):
-        if '/api/job/' not in (self.path or ''):  # 輪詢進度不用洗版
+        if '/api/job/' not in (self.path or ''):  # Avoid flooding the log while polling job progress
             sys.stderr.write(f'  {self.address_string()} {fmt % args}\n')
 
     def handle_one_request(self):
         self._body_read = False
         super().handle_one_request()
 
-    # ------------------------------------------------------------ 請求 body
+    # ------------------------------------------------------------ Request body
 
     def content_length(self):
         try:
@@ -615,7 +622,7 @@ class Handler(SimpleHTTPRequestHandler):
             return 0
 
     def read_body(self, length=None):
-        """讀取請求 body（每個請求只讀一次）。"""
+        """Read the request body (only once per request)."""
         if getattr(self, '_body_read', False):
             return b''
         self._body_read = True
@@ -630,13 +637,15 @@ class Handler(SimpleHTTPRequestHandler):
         return b''.join(chunks)
 
     def discard_body(self):
-        """把還沒讀的 body 丟掉。
+        """Discard any unread request body.
 
-        這件事非做不可：伺服器是 HTTP/1.1 keep-alive，如果回了錯誤就直接 return、
-        沒把 body 讀掉，那些位元組會留在連線裡被當成「下一個 HTTP 請求」解析，
-        伺服器就會回一頁 HTML 錯誤頁；前端下一次 res.json() 於是爆
-        「Unexpected token '<', "<!DOCTYPE "... is not valid JSON」。
-        body 太大就乾脆關連線，不值得為了同步而讀掉幾百 MB。
+        This is essential: the server uses HTTP/1.1 keep-alive. If an error is
+        returned and we exit without consuming the body, those bytes remain on the
+        connection and are parsed as the "next HTTP request." The server then returns
+        an HTML error page, causing the frontend's next res.json() call to fail with
+        "Unexpected token '<', "<!DOCTYPE "... is not valid JSON".
+        If the body is too large, simply close the connection; consuming hundreds
+        of megabytes just to keep it synchronized is not worthwhile.
         """
         if getattr(self, '_body_read', False):
             return
@@ -646,7 +655,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         self.read_body()
 
-    # ------------------------------------------------------------ 回覆工具
+    # ------------------------------------------------------------ Response helpers
 
     def send_json(self, obj, status=200, headers=()):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -741,10 +750,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_json({'error': message}, status)
 
     def resolve_media(self, rel):
-        """把前端傳來的 /media/xxx 轉成實際路徑。
+        """Resolve a frontend-provided /media/xxx path to its actual file path.
 
-        准動 media 目錄（含子目錄，例如 media/stems/…/guitar.wav）裡的檔案，
-        但擋掉 ../ 這種跳出去的路徑。
+        Allow files inside the media directory (including subdirectories such as
+        media/stems/…/guitar.wav), but block paths that escape it, such as ../.
         """
         rel = (rel or '').strip()
         if not rel:
@@ -801,7 +810,7 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def serve_stems_zip(self, media):
-        """把某首歌分出來的 6 軌 wav 打包成 zip 下載。"""
+        """Package the 6 separated WAV stems for a song into a ZIP download."""
         src = self.resolve_media(media)
         if src is None:
             return self.fail('Audio file not found.', 404)
@@ -814,11 +823,11 @@ class Handler(SimpleHTTPRequestHandler):
         import io
         import zipfile
         buf = io.BytesIO()
-        # wav 壓不太動，用 STORED 省時間
+        # WAV files do not compress much, so use STORED to save time
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_STORED) as z:
             for w in wavs:
                 label = STEM_LABELS.get(w.stem, w.stem)
-                label = label.replace('/', '／').replace('\\', '＿').strip()  # 別讓 / 在 zip 裡變子資料夾
+                label = label.replace('/', '／').replace('\\', '＿').strip()  # Prevent / from creating subdirectories in the ZIP
                 z.write(w, arcname=f'{label}.wav')
         data = buf.getvalue()
         self.send_response(200)
@@ -829,7 +838,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def end_headers(self):
-        # 開發時避免瀏覽器抓到舊的 js/css
+        # Prevent the browser from loading stale JS/CSS during development
         if self.path.endswith(('.js', '.css', '.html')) or self.path == '/':
             self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
@@ -885,7 +894,7 @@ class Handler(SimpleHTTPRequestHandler):
             if length <= 0:
                 return self.fail('No file data received.')
             if length > MAX_UPLOAD:
-                # 不讀那幾百 MB，直接關連線（fail() 會處理），不然只是白等
+                # Do not read hundreds of MB; close the connection directly (fail() handles it) rather than waiting for nothing
                 return self.fail(
                     f'File is too large ({length / 1024 / 1024:.0f} MB; limit is '
                     f'{MAX_UPLOAD // 1024 // 1024} MB). Convert it to MP3 with ffmpeg before uploading.',
@@ -912,7 +921,7 @@ class Handler(SimpleHTTPRequestHandler):
                     remaining -= len(chunk)
 
             if written < length:
-                # 上傳中斷，連線狀態已經不可信，關掉重來
+                # The upload was interrupted and the connection state is unreliable; close it and start over
                 self.close_connection = True
                 path.unlink(missing_ok=True)
                 return self.send_json({'error': 'Upload interrupted. Please try again.'}, 400)
@@ -925,8 +934,9 @@ class Handler(SimpleHTTPRequestHandler):
             ).start()
             return self.send_json({'job': job_id})
 
-        # 只上傳存檔、回傳 media 路徑，不做和弦分析。給「直接分軌」用：
-        # 前端拿到 media 後再打 /api/stems，就能跳過抓和弦直接分離音檔。
+        # Only upload and save the file, then return its media path; do not analyze
+        # chords. Used for "separate stems directly": after receiving the media path,
+        # the frontend can call /api/stems to separate the audio without chord detection.
         if parsed.path == '/api/upload-audio':
             if length <= 0:
                 return self.fail('No file data received.')

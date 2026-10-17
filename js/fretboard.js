@@ -1,8 +1,8 @@
-// 螢幕上的指板鏡像：把送到吉他的燈同步畫出來
-// 用途一是沒接琴也能確認整條資料流正確，用途二是錄 IG 短影音的畫面主體。
+// On-screen fretboard mirror: display the lights sent to the guitar in sync.
+// This lets you verify the full data flow without a guitar, or use it as the main view in Instagram reels.
 
 const SHARED_OVERLAY = { hex: '#ff6ec7', text: '#2b0020' };
-const STRING_GAUGE = [3.4, 3.0, 2.6, 2.2, 1.9, 1.6]; // 第6弦最粗 → 第1弦最細
+const STRING_GAUGE = [3.4, 3.0, 2.6, 2.2, 1.9, 1.6]; // String 6 is thickest → string 1 is thinnest.
 
 export class FretboardView {
   /**
@@ -11,22 +11,23 @@ export class FretboardView {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.frets = 24; // 顯示到第幾格
+    this.frets = 24; // Number of frets to display.
     this.orientation = 'horizontal'; // horizontal | vertical
     /** @type {Array<{leds:Array<{fret:number,strings:number[]}>, color:{r:number,g:number,b:number}}>} */
     this.groups = [];
-    /** 和弦分析的綠色疊圖：每個變化型 { notes:[{string,fret}] }，畫在譜上音符的下層 */
+    /** Chord-analysis overlay: each voicing is { notes:[{string,fret}] }, drawn beneath the notes on the score. */
     this.overlay = [];
     this._raf = null;
     this._pulse = 0;
 
-    // 互動點燈：開啟後點指板任一格會呼叫 _onCell(string, fret)
+    // Interactive lighting: when enabled, clicking any fretboard cell calls _onCell(string, fret).
     this.interactive = false;
     this._onCell = null;
 
     this._resize = this._resize.bind(this);
     window.addEventListener('resize', this._resize);
-    // 版面切換（IG 直式、收合面板）不會觸發 window resize，所以直接盯著元素本身
+    // Layout changes (Instagram portrait mode, collapsed panels) do not trigger window resize,
+    // so observe the element itself.
     this._observer = new ResizeObserver(this._resize);
     this._observer.observe(canvas);
 
@@ -43,14 +44,14 @@ export class FretboardView {
     if (this._raf) cancelAnimationFrame(this._raf);
   }
 
-  /** 開/關互動點燈。onCell(string, fret) 會在點某一格時被呼叫 */
+  /** Enable/disable interactive lighting. onCell(string, fret) is called when a cell is clicked. */
   setInteractive(on, onCell = null) {
     this.interactive = !!on;
     if (onCell) this._onCell = onCell;
     this.canvas.style.cursor = this.interactive ? 'pointer' : '';
   }
 
-  /** 把點到的畫面座標換成最接近的 {string, fret}；太遠就回 null */
+  /** Convert clicked screen coordinates to the nearest {string, fret}; return null if too far away. */
   _hit(px, py) {
     let best = null;
     let bestD = Infinity;
@@ -64,7 +65,7 @@ export class FretboardView {
         }
       }
     }
-    // 點得離任何一格都太遠（例如點到邊框外）就不算
+    // Ignore clicks too far from any cell (for example, outside the fretboard).
     const short = this.orientation === 'horizontal' ? this.h : this.w;
     const limit = (short * 0.16) ** 2;
     return best && bestD <= limit ? best : null;
@@ -133,12 +134,12 @@ export class FretboardView {
     ctx.fillText(label, p.x, p.y + 0.5);
   }
 
-  /** 格號 → 沿著琴頸方向的座標比例（0=空弦標記區，1=最後一格） */
+  /** Fret number → position ratio along the neck (0 = open-string marker area, 1 = last fret). */
   _fretPos(fret) {
-    // 真實吉他的格距是遞減的，照著畫看起來才像吉他
+    // Real guitar fret spacing decreases along the neck; match it here for a realistic look.
     const scale = (n) => 1 - Math.pow(2, -n / 12);
     const total = scale(this.frets);
-    const nut = 0.055; // 左側留給空弦圓點
+    const nut = 0.055; // Leave room on the left for open-string markers.
     if (fret <= 0) return nut * 0.45;
     const a = scale(fret - 1) / total;
     const b = scale(fret) / total;
@@ -151,23 +152,23 @@ export class FretboardView {
     return nut + (scale(fret) / scale(this.frets)) * (1 - nut);
   }
 
-  /** 弦所在的橫向比例；下緣留 12% 給格號 */
+  /** Horizontal position ratio for a string; reserve 12% at the bottom for fret numbers. */
   _across(string) {
     return 0.02 + ((string - 0.5) / 6) * 0.86;
   }
 
   /**
-   * @returns {{x:number,y:number}} 第 string 弦、第 fret 格的畫面座標
+   * @returns {{x:number,y:number}} Screen coordinates for the given string and fret.
    */
   _dot(string, fret) {
     const along = this._fretPos(fret);
-    const across = this._across(string); // string 1 在最上（細弦在上，和六線譜一致）
+    const across = this._across(string); // String 1 is at the top (thin strings above, as in standard notation).
     return this.orientation === 'horizontal'
       ? { x: along * this.w, y: across * this.h }
       : { x: (1 - across) * this.w, y: along * this.h };
   }
 
-  /** 格號標籤的位置（指板下緣／直式時的側緣） */
+  /** Position of fret-number labels (bottom edge of fretboard / side edge in portrait mode). */
   _labelPos(fret) {
     const along = this._fretPos(fret);
     return this.orientation === 'horizontal'
@@ -197,7 +198,7 @@ export class FretboardView {
     const long = this.orientation === 'horizontal' ? this.w : this.h;
     const short = this.orientation === 'horizontal' ? this.h : this.w;
 
-    // 指板底色
+    // Fretboard background
     const grad =
       this.orientation === 'horizontal'
         ? ctx.createLinearGradient(0, 0, 0, this.h)
@@ -208,7 +209,7 @@ export class FretboardView {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, this.w, this.h);
 
-    // 琴枕
+    // Nut
     const nut = this._line(0);
     ctx.strokeStyle = '#c9c6bd';
     ctx.lineWidth = Math.max(3, short * 0.018);
@@ -217,7 +218,7 @@ export class FretboardView {
     ctx.lineTo(nut[1].x, nut[1].y);
     ctx.stroke();
 
-    // 格線
+    // Fret lines
     ctx.lineWidth = 1.2;
     for (let f = 1; f <= this.frets; f++) {
       const [a, b] = this._line(f);
@@ -228,7 +229,7 @@ export class FretboardView {
       ctx.stroke();
     }
 
-    // 定位點（3、5、7、9、12、15、17、19、21、24）
+    // Position markers (3, 5, 7, 9, 12, 15, 17, 19, 21, 24)
     const inlays = [3, 5, 7, 9, 15, 17, 19, 21];
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     const inlayR = Math.max(2.5, short * 0.026);
@@ -249,7 +250,7 @@ export class FretboardView {
       }
     }
 
-    // 弦
+    // Strings
     for (let s = 1; s <= 6; s++) {
       const [a, b] = this._stringLine(s);
       ctx.strokeStyle = 'rgba(226,226,232,0.42)';
@@ -260,7 +261,7 @@ export class FretboardView {
       ctx.stroke();
     }
 
-    // 格號
+    // Fret numbers
     ctx.fillStyle = 'rgba(255,255,255,0.30)';
     ctx.font = `${Math.max(9, short * 0.055)}px -apple-system, system-ui, sans-serif`;
     ctx.textAlign = 'center';
@@ -271,10 +272,11 @@ export class FretboardView {
       ctx.fillText(String(f), p.x, p.y);
     }
 
-    // 亮燈
+    // Illuminated LEDs
     const r = Math.max(5, short * 0.062);
 
-    // 和弦分析疊圖：每個指型各一色（編號 = 沿琴頸由低到高的順序）；被多個指型共用的音畫粉紅色
+    // Chord-analysis overlay: one color per voicing (numbered from low to high along the neck);
+    // notes shared by multiple voicings are pink.
     const shared = new Map();
     this.overlay.forEach((v, idx) => {
       for (const n of v.notes) {
@@ -307,7 +309,7 @@ export class FretboardView {
           ctx.fill();
           ctx.restore();
 
-          // 中心高光，讓顏色深的時候還看得出是亮著的
+          // Center highlight keeps the LED visible when its color is dark.
           ctx.fillStyle = 'rgba(255,255,255,0.75)';
           ctx.beginPath();
           ctx.arc(p.x, p.y, r * 0.32, 0, Math.PI * 2);
@@ -316,7 +318,7 @@ export class FretboardView {
       }
     }
 
-    // 空弦（第 0 格）另外標一圈，和按壓的音區隔
+    // Give open strings (fret 0) a separate ring to distinguish them from fretted notes.
     for (const g of this.groups) {
       for (const led of g.leds) {
         if (led.fret !== 0) continue;

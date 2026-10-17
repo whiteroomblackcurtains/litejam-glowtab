@@ -22,11 +22,11 @@ import { StemMixer } from './mixer.js';
 const $ = (id) => document.getElementById(id);
 
 /**
- * 綁事件，元素不存在就跳過。
+ * Bind events, skipping elements that do not exist.
  *
- * 這不是防禦性程式碼潔癖：如果瀏覽器抓到舊的 index.html（少了某個元素），
- * 原本 `el.某個.addEventListener` 會丟 TypeError，然後**後面所有的綁定都不會執行**，
- * 結果就是一堆看起來完全沒反應的按鈕，而且很難查。寧可只壞掉一顆。
+ * This is not defensive-programming fussiness: if the browser loads an old index.html (missing an element),
+ * the original `el.someElement.addEventListener` would throw a TypeError, and **none of the later event bindings would run**,
+ * leaving a bunch of buttons that appear completely unresponsive and are hard to debug. Better for just one button to fail.
  */
 function on(node, type, handler, opts) {
   if (node) node.addEventListener(type, handler, opts);
@@ -115,7 +115,7 @@ const el = {
   loading: $('loading'),
   loadingText: $('loading-text'),
 
-  // 和弦模式
+  // Chord mode
   chordBtn: $('btn-chord'),
   modal: $('chord-modal'),
   modalClose: $('modal-close'),
@@ -193,21 +193,21 @@ let scoreLoaded = false;
 let seeking = false;
 let endTime = 0;
 
-/** 'tab' = 看 Guitar Pro 譜；'chord' = 自動抓出來的和弦譜；'picker' = 自己點和弦 */
+/** 'tab' = view a Guitar Pro score; 'chord' = automatically detected chord chart; 'picker' = choose chords manually */
 let mode = 'tab';
 let chart = null;
 let picker = null;
-let lastAnalysisSource = null; // 重新分析用
+let lastAnalysisSource = null; // Used for re-analysis
 
-/** 'audio' = 抓下來的音檔；'video' = YouTube 影片；'stems' = 分軌混音 */
+/** 'audio' = downloaded audio; 'video' = YouTube video; 'stems' = stem mixer */
 let playSource = 'audio';
 let videoPlayer = null;
 let mixer = null;
-let stemsMedia = null; // mixer 目前載的是哪一首的軌，換歌要重分
+let stemsMedia = null; // Which song's stems are currently loaded in the mixer; re-separate when the song changes
 
 /**
- * 目前的播放來源。三種來源都提供
- * play / pause / paused / currentTime / duration，所以外面可以一視同仁。
+ * The current playback source. All three sources provide
+ * play / pause / paused / currentTime / duration, so they can be handled uniformly.
  */
 function clock() {
   if (playSource === 'video' && videoPlayer?.available) return videoPlayer;
@@ -215,7 +215,7 @@ function clock() {
   return audio;
 }
 
-/* ---------------- 設定存取 ---------------- */
+/* ---------------- Settings access ---------------- */
 
 function load() {
   const defaults = {
@@ -259,11 +259,11 @@ function save() {
   try {
     localStorage.setItem('litejam-glowtab', JSON.stringify(settings));
   } catch {
-    /* 私密瀏覽模式下寫不進去，不影響使用 */
+    /* Writes are unavailable in private browsing; this does not affect use. */
   }
 }
 
-/* ---------------- 小工具 ---------------- */
+/* ---------------- Utilities ---------------- */
 
 let toastTimer = null;
 function toast(msg, isError = false) {
@@ -353,7 +353,7 @@ function initAlphaTab() {
   api.playerStateChanged.on((e) => {
     const playing = e.state === 1; // 1 = Playing
     el.play.textContent = playing ? '⏸' : '▶';
-    if (playing) ledRun++; // 開始播放就取消還在跑的測試動畫
+    if (playing) ledRun++; // Starting playback cancels any running test animation
     else clearLeds();
   });
 
@@ -368,7 +368,7 @@ function initAlphaTab() {
 
   api.playedBeatChanged.on((beat) => onBeat(beat));
 
-  // 套用初始設定
+  // Apply initial settings
   api.playbackSpeed = settings.speed / 100;
   api.metronomeVolume = settings.metronome ? 1 : 0;
   api.countInVolume = settings.countIn ? 1 : 0;
@@ -395,40 +395,40 @@ function renderTrackList(score) {
   });
 }
 
-/* ---------------- 亮燈 ---------------- */
+/* ---------------- Light LEDs ---------------- */
 
 /**
- * alphaTab 的 note.string 編號和吉他慣例相反：1 = 最低音的第六弦（粗），
- * 6 = 最高音的第一弦（細）。已用範例譜的實際音高驗證
- * （string 2 + 第3格 = MIDI 48 = C3，只有 A 弦成立，也就是第五弦）。
+ * alphaTab's note.string numbering is opposite to guitar convention: 1 = the lowest-pitched sixth string (thick),
+ * 6 = the highest-pitched first string (thin). Verified against the actual pitches in the sample score
+ * (string 2 + fret 3 = MIDI 48 = C3, which only works on the A string, i.e. the fifth string).
  */
 function atStringToGuitar(atString) {
   return 7 - atString;
 }
 
 /**
- * 吉他慣例（1 = 細弦）→ 送給琴的編號。
- * LiteJam 的 bitmask bit0 = 第1弦，所以正常情況直接對應；
- * 若實機亮燈的弦剛好上下相反，勾「弦序反轉」。
+ * Guitar convention (1 = thin string) → the number sent to the guitar.
+ * In LiteJam's bitmask, bit0 = first string, so the numbers normally map directly;
+ * if the physical LEDs light strings in the opposite order, enable "Reverse string order."
  */
 function hwString(guitarString) {
   return settings.reverseStrings ? 7 - guitarString : guitarString;
 }
 
 /**
- * 這一拍的音符要亮在哪條弦、哪一格（吉他慣例：1 = 細弦）。
+ * Which string and fret to light for the notes in this beat (guitar convention: 1 = thin string).
  * Score positions are used unchanged for standard tuning or when the score
  * already encodes the intended custom tuning. Otherwise, calculate by pitch.
  */
 function beatPositions(beat) {
   const notes = (beat?.notes ?? []).filter(
-    // 延音線的後半段不重新亮
+    // Do not relight the second half of a tie
     (n) => !n.isTieDestination && n.string != null && n.fret != null && n.fret >= 0
   );
   if (!settings.useCustomTuningForScoreNotes || sameTuning(settings.tuning, STANDARD_TUNING)) {
     return notes.map((note) => ({ note, gstr: atStringToGuitar(note.string), fret: note.fret }));
   }
-  // 泛音要亮「按下去的那一格」，所以不用含泛音的音高
+  // Harmonics should light the fret being pressed, so use the pitch without the harmonic
   const requests = notes.map((n) => ({
     pitch: n.realValueWithoutHarmonic ?? n.realValue,
     preferred: atStringToGuitar(n.string),
@@ -452,7 +452,7 @@ function currentGroups(beat) {
 
   if (settings.showNext) {
     const next = beatToNotes(beat?.nextBeat);
-    // 同一格已經被「正在彈」佔用時就不重複送，免得顏色互相蓋掉
+    // Do not send the same fret again if it is already occupied by a currently playing note, to avoid colors overwriting each other
     const taken = new Set(now.map((n) => `${n.string}:${n.fret}`));
     const preview = next.filter((n) => !taken.has(`${n.string}:${n.fret}`));
     if (preview.length) {
@@ -463,23 +463,23 @@ function currentGroups(beat) {
   return groups;
 }
 
-// 推弦動畫的世代編號：換拍或關燈都會讓上一段滑動自己停下來
+// Bend-animation generation counter: changing beats or turning off the lights stops the previous slide
 let bendRun = 0;
 
 /**
- * 推弦幅度 → 掃幾條弦。alphaTab 的 bend 值是 1/4 音為單位，
- * 所以「半音數 = 最大 bend 值 / 2」，半音→1、全音(2 半音)→2、1.5 音(3 半音)→3。
+ * Bend amount → number of strings to sweep. alphaTab's bend value is measured in quarter tones,
+ * so "semitones = maximum bend value / 2": one semitone → 1, a whole tone (2 semitones) → 2, 1.5 tones (3 semitones) → 3.
  */
 function bendStringCount(note) {
   const vals = (note.bendPoints ?? []).map((p) => p.value);
-  if (!vals.length) return 2; // 沒有明細就當全音
+  if (!vals.length) return 2; // Assume a whole tone if no details are available
   const semitones = Math.max(...vals) / 2;
   return Math.max(1, Math.min(5, Math.round(semitones)));
 }
 
 /**
- * 這一拍有推弦（bend）的音符 → 弦會被推到「隔壁弦」的位置（同一格），推越大條掃越多條。
- * 1、2、3 弦往上推 → 弦往粗弦方向掃（弦號變大）；4、5、6 弦往下推 → 往細弦方向掃（弦號變小）。
+ * Notes with a bend in this beat → sweep the string toward the neighboring string at the same fret; larger bends sweep more strings.
+ * Bending strings 1, 2, and 3 upward sweeps toward the thicker strings (higher string numbers); bending strings 4, 5, and 6 downward sweeps toward the thinner strings (lower string numbers).
  */
 function bendTargets(beat) {
   const out = [];
@@ -492,18 +492,18 @@ function bendTargets(beat) {
 }
 
 /**
- * 推弦動態亮燈：同一格、往鄰弦方向掃。掃幾條看推弦幅度
- * （半音掃 1 條、全音 2 條、1.5 音 3 條）。疊在正常亮燈之上，一條一條掃出去。
+ * Dynamic LEDs for bends: sweep toward neighboring strings at the same fret. The bend amount determines
+ * how many strings to sweep (one semitone sweeps 1 string, a whole tone 2, 1.5 tones 3). Layer this over the normal lights, sweeping one string at a time.
  */
 async function animateBends(bends, baseGroups, run) {
   const b = settings.brightness / 100;
   const color = scaleColor(hexToRgb(settings.colorMain), b);
   const maxCount = Math.max(...bends.map((bd) => bd.count));
   for (let step = 1; step <= maxCount; step++) {
-    if (run !== bendRun) return; // 換拍或關燈了就停
+    if (run !== bendRun) return; // Stop if the beat changed or the lights were turned off
     const lit = [];
     for (const bd of bends) {
-      // 累積：一條一條往鄰弦亮出去，最多亮到這個推弦該掃的條數
+      // Accumulate: light neighboring strings one by one, up to the number specified by this bend
       for (let k = 1; k <= Math.min(step, bd.count); k++) {
         const gs = bd.gstr + bd.dir * k;
         if (gs >= 1 && gs <= 6) lit.push({ string: hwString(gs), fret: bd.fret });
@@ -518,12 +518,12 @@ async function animateBends(bends, baseGroups, run) {
   }
 }
 
-/* ---------------- 譜面和弦分析（彩色疊圖，也會送到琴上） ---------------- */
+/* ---------------- Score chord analysis (colored overlay, also sent to the guitar) ---------------- */
 
 let tabChords = null; // { segments, current, variants }
 let lastBeat = null;
 
-/** 疊圖的燈組：每個指型一色，被共用的音合併成一組粉紅色 */
+/** Overlay light groups: one color per shape, with shared notes combined into a pink group */
 function overlayLedGroups() {
   const variants = tabChords?.variants ?? [];
   if (!variants.length) return [];
@@ -545,7 +545,7 @@ function overlayLedGroups() {
   return groups;
 }
 
-/** 暫停或剛按下分析時，把目前的譜面燈加疊圖重送給琴 */
+/** Resend the current score lights and overlay to the guitar when paused or just after analysis starts */
 function resendLeds() {
   if (guitar.status !== 'connected') return;
   guitar.sendSegment([...overlayLedGroups(), ...currentGroups(lastBeat)]);
@@ -634,7 +634,7 @@ function onBeat(beat) {
   if (tabChords && beat?.absolutePlaybackStart != null) {
     showTabChord(segmentAt(tabChords.segments, beat.absolutePlaybackStart));
   }
-  const run = ++bendRun; // 取消上一拍還在滑的推弦動畫
+  const run = ++bendRun; // Cancel the bend animation still sliding from the previous beat
   const groups = currentGroups(beat);
   fretboard.setGroups(groups);
   if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
@@ -763,8 +763,8 @@ on(el.scalePreset, 'change', () => {
 });
 
 function clearLeds() {
-  ledRun++; // 中止還在跑的測試動畫
-  bendRun++; // 中止推弦滑動動畫
+  ledRun++; // Stop any running test animation
+  bendRun++; // Stop the bend-slide animation
   if (scaleActive) {
     scaleActive = false;
     fretboard.setFrets(settings.frets);
@@ -943,14 +943,14 @@ on(el.toggleScoreTuning, 'change', () => {
   save();
 });
 
-/* ---------------- 手動點燈：自己點指板排出和弦 ---------------- */
+/* ---------------- Manual LEDs: click the fretboard to build chords ---------------- */
 
-// 螢幕指板畫的就是「硬體弦號」，使用者點到的就是硬體位置，
-// 所以這裡不再套 hwString——點哪一格就亮那一格。
+// The on-screen fretboard uses "hardware string numbers," so a click corresponds to the physical position;
+// do not apply hwString here—light exactly the clicked position.
 const manualLeds = new Map(); // `${string}:${fret}` -> {string, fret}
 
 function showManual() {
-  ledRun++; // 中止測試動畫
+  ledRun++; // Stop the test animation
   if (!manualLeds.size) {
     fretboard.clear();
     if (guitar.status === 'connected') guitar.ledOff();
@@ -976,19 +976,19 @@ function setPaintMode(on) {
   fretboard.setInteractive(on, toggleManualCell);
   document.body.classList.toggle('paint-mode', on);
   if (on) {
-    showManual(); // 進場先把現有手動燈畫出來（可能是空的）
+    showManual(); // Draw the existing manual lights on entry (there may be none)
   } else {
     manualLeds.clear();
     clearLeds();
   }
 }
 
-/* ---------------- 和弦模式 ---------------- */
+/* ---------------- Chord mode ---------------- */
 
 /**
- * 這個和弦要亮什麼顏色。
- * 依大小調上色時，大調用 --major（藍）、小調用 --minor（紅），
- * 和譜面上的顏色一致，看指板就知道是大調還是小調。
+ * Which color to use for this chord.
+ * When coloring by major/minor, use --major (blue) for major and --minor (red) for minor,
+ * matching the score colors so the fretboard shows at a glance whether a chord is major or minor.
  */
 function qualityColor(name) {
   if (!settings.colorByQuality || !name) return hexToRgb(settings.colorMain);
@@ -1005,9 +1005,9 @@ function chordGroups(beatIndex) {
   const capo = chart.capo ?? 0;
   const notes = v.notes.map((n) => ({
     string: hwString(n.string),
-    // 指型是相對移調夾的，實際位置要加上移調夾的格數。
-    // 指型裡的空弦被移調夾按在 capo 格上，所以亮在 capo 那一格
-    // （亮在第 0 格會指到琴枕，跟實際手指的位置不一樣）。
+    // Shapes are relative to the capo; add the capo fret to get the actual position.
+    // Open strings in the shape are fretted by the capo, so light the capo fret
+    // (lighting fret 0 would point to the nut, not where the finger actually is).
     fret: n.fret > 0 ? n.fret + capo : capo,
   }));
   return [{ leds: packNotes(notes), color }];
@@ -1019,8 +1019,8 @@ function onChordBeat(beatIndex) {
   if (guitar.status === 'connected') guitar.sendSegment(groups);
 }
 
-// 用計時器而不是 requestAnimationFrame：rAF 在視窗被切到背景時會停，
-// 燈就跟著卡住；亮燈同步不該依賴畫面有沒有在重繪。
+// Use a timer instead of requestAnimationFrame: rAF pauses when the window is in the background,
+// which would freeze the lights; LED synchronization should not depend on whether the screen is being redrawn.
 let tickTimer = null;
 
 function chordTick() {
@@ -1030,7 +1030,7 @@ function chordTick() {
   const src = clock();
   let t = src.currentTime;
 
-  // 選段循環：跑過終點就跳回起點（比 audio.loop 精確，也才能只循環一段）
+  // Loop selection: jump back to the start after passing the end (more precise than audio.loop and allows looping just one section)
   const range = chart.loopRange;
   if (settings.loop && range && t >= range.end - 0.02) {
     src.currentTime = range.start;
@@ -1086,10 +1086,10 @@ function enterChordMode(result) {
         onChordBeat(chart.beatIndex);
         el.timeCur.textContent = fmtTime(time * 1000);
       },
-      // 點上面的和弦圖 → 跳到和弦盤看這個和弦的所有把位
+      // Click a chord diagram above → open the chord browser to see every position for that chord
       onChordClick: (name) => enterPickerMode(name),
       onLoopChange: (range) => {
-        // 選了區間就用自己的循環邏輯，不要讓 audio.loop 整首從頭跑
+        // If a range is selected, use the custom loop logic instead of letting audio.loop restart the whole song
         audio.loop = settings.loop && !range;
         if (!range) return toast('Loop selection cleared.');
         toast(`Looping bars ${range.fromBar + 1}–${range.toBar + 1}${settings.loop ? '' : ' (press Loop to start)'}`);
@@ -1100,7 +1100,7 @@ function enterChordMode(result) {
   chart.setAutoScroll(settings.chordAutoScroll);
   chart.setData(result);
 
-  // 之前手動改過的和弦要套回來，並在改動時存檔
+  // Restore previously edited chords, and save any future changes
   chart.onEditsChanged((edits) => {
     saveEdits(result.media, edits);
     refreshEditCount();
@@ -1114,7 +1114,7 @@ function enterChordMode(result) {
   el.editChords?.classList.remove('on');
   refreshEditCount();
 
-  // 歌詞也一起還原
+  // Restore lyrics too
   el.panelLyrics.hidden = false;
   const savedLyrics = loadLyricsRaw(result.media);
   if (savedLyrics?.text) {
@@ -1129,7 +1129,7 @@ function enterChordMode(result) {
     chart.setLyrics([]);
   }
 
-  // 級數譜的「1」預設用偵測到的調，使用者可以自己改
+  // The scale-degree chart defaults to the detected key as "1"; the user can change it
   if (el.keyRoot) el.keyRoot.value = String(result.keyRoot ?? 0);
   if (el.displayMode) el.displayMode.value = settings.chordDisplay ?? 'chord';
   chart.setDisplayMode(settings.chordDisplay ?? 'chord');
@@ -1150,7 +1150,7 @@ function enterChordMode(result) {
   audio.loop = settings.loop;
   audio.load();
 
-  // 每次載新歌都先回到音檔，影片要使用者自己切
+  // Switch back to audio whenever a new song loads; the user can switch to video manually
   playSource = 'audio';
   el.playSource.value = 'audio';
   el.videoWrap.hidden = true;
@@ -1166,7 +1166,7 @@ function enterChordMode(result) {
   el.seek.value = '0';
   el.play.textContent = '▶';
 
-  // 節拍器與預備拍是 alphaTab 播放器的功能，音檔模式沒有
+  // The metronome and count-in are alphaTab player features and are unavailable in audio mode
   el.metronome.disabled = true;
   el.countin.disabled = true;
 
@@ -1215,7 +1215,7 @@ audio.addEventListener('error', () => {
   if (mode === 'chord') toast('Unable to play this audio file. Its format may not be supported by the browser.', true);
 });
 
-/* ---- 級數譜 ---- */
+/* ---- Scale-degree chart ---- */
 
 const KEY_NAMES = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F', 'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B'];
 
@@ -1238,7 +1238,7 @@ on(el.keyRoot, 'change', () => {
   chart?.setKeyRoot(Number(el.keyRoot.value));
 });
 
-/* ---- 手動改第一拍的位置（小節線切錯時用） ---- */
+/* ---- Manually adjust the first beat position (for incorrectly placed bar lines) ---- */
 
 on(el.downbeat, 'change', async () => {
   const media = chart?.data?.media;
@@ -1247,8 +1247,8 @@ on(el.downbeat, 'change', async () => {
   const raw = el.downbeat.value;
   const downbeat = raw === 'auto' ? null : Number(raw);
 
-  // 手動改過的和弦是用「拍序號」記的，拍點不變所以改小節線不會弄丟；
-  // 歌詞是用「小節」記的，切法一改就會位移，所以之後重新套一次。
+  // Manual chord edits are indexed by beat number, so changing bar lines does not lose them;
+  // lyrics are indexed by bar, so they shift when the bars change and must be reapplied afterward.
   const edits = chart.editsSnapshot();
   const lyricsRaw = loadLyricsRaw(media);
 
@@ -1290,7 +1290,7 @@ on(el.downbeat, 'change', async () => {
   }
 });
 
-/* ---- 移調夾 ---- */
+/* ---- Capo ---- */
 
 function describeCapo(n) {
   return n ? `Fret ${n}` : 'None';
@@ -1353,7 +1353,7 @@ on(el.exportBtn, 'click', () => {
   toast('Text file exported.');
 });
 
-/* ---- 歌詞（自己貼，自動配拼音） ---- */
+/* ---- Lyrics (paste them in; pinyin is added automatically) ---- */
 
 function lyricsStoreKey(media) {
   return `litejam-lyrics:${media ?? ''}`;
@@ -1372,16 +1372,16 @@ function saveLyricsRaw(media, payload) {
     if (payload) localStorage.setItem(lyricsStoreKey(media), JSON.stringify(payload));
     else localStorage.removeItem(lyricsStoreKey(media));
   } catch {
-    /* 私密瀏覽模式寫不進去 */
+    /* Writes are unavailable in private browsing */
   }
 }
 
-/** 把「一行一小節」的文字，配上拼音後放到對應的小節上 */
+/** Add pinyin to text with one line per bar and place it in the corresponding bars */
 async function buildLyrics(text, offsetBar, style) {
   const lines = text.replace(/\r/g, '').split('\n');
   let pinyins = lines.map(() => '');
 
-  if (style !== 'off' && lines.some((l) => /[㐀-鿿]/.test(l))) {
+  if (style !== 'off' && lines.some((l) => /[\u3400-\u9FFF]/.test(l))) {
     const res = await fetch('/api/pinyin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1428,9 +1428,9 @@ on(el.clearLyrics, 'click', () => {
   toast('Lyrics cleared.');
 });
 
-/* ---- 手動修和弦 ---- */
+/* ---- Manual chord edits ---- */
 
-/** 修改存在瀏覽器裡，用音檔當 key，同一首歌下次打開還在 */
+/** Edits are stored in the browser using the audio file as the key, so they persist when the same song is reopened */
 function editStoreKey(media) {
   return `litejam-edits:${media ?? ''}`;
 }
@@ -1451,7 +1451,7 @@ function saveEdits(media, edits) {
       localStorage.removeItem(editStoreKey(media));
     }
   } catch {
-    /* 私密瀏覽模式寫不進去 */
+    /* Writes are unavailable in private browsing */
   }
 }
 
@@ -1481,7 +1481,7 @@ on(el.resetChords, 'click', () => {
   toast('Manual edits cleared. Reanalyze to restore automatic results.');
 });
 
-/* ---- 抓 Solo 單音 → 做成六線譜 ---- */
+/* ---- Extract solo notes → create tablature ---- */
 
 on(el.soloBtn, 'click', async () => {
   const media = chart?.data?.media;
@@ -1501,7 +1501,7 @@ on(el.soloBtn, 'click', async () => {
     const melody = await pollJob(payload.job, (pct, msg) => busy(`${msg} ${Math.round(pct)}%`));
     if (!melody.notes?.length) throw new Error('No clear single-note melody found. The mix may be too dense, or this section may have no lead part.');
 
-    // 交給 alphaTab 渲染成真正的六線譜；播放與亮燈就沿用樂譜模式
+    // Let alphaTab render actual tablature; playback and LEDs then work just like score mode
     audio.pause();
     exitChordMode();
     api.tex(melodyToTex(melody));
@@ -1515,7 +1515,7 @@ on(el.soloBtn, 'click', async () => {
   }
 });
 
-/* ---- 分軌畫面：把「吉他軌」直接抓成主奏六線譜（比整團乾淨） ---- */
+/* ---- Stem view: extract the guitar stem directly as lead tablature (cleaner than the full mix) ---- */
 on(el.stemSolo, 'click', async () => {
   const guitar = mixer?.tracks.find((t) => t.id === 'guitar');
   if (!guitar?.url) return toast('Split the stems first to extract a lead from the guitar track.');
@@ -1550,12 +1550,12 @@ on(el.stemSolo, 'click', async () => {
 on(el.backTab, 'click', exitChordMode);
 on(el.reanalyze, 'click', () => openChordModal());
 
-/* ---------------- 和弦盤：自己點和弦 ---------------- */
+/* ---------------- Chord browser: choose chords manually ---------------- */
 
-/** 把一個指型亮到螢幕指板與琴上；傳 null 代表關燈 */
+/** Light a chord shape on the on-screen fretboard and guitar; pass null to turn the lights off */
 function showVoicing(v) {
   if (!v) return clearLeds();
-  ledRun++; // 中止測試動畫
+  ledRun++; // Stop the test animation
   const b = settings.brightness / 100;
   const color = scaleColor(qualityColor(v.name), b);
   const notes = v.notes.map((n) => ({ string: hwString(n.string), fret: n.fret }));
@@ -1612,7 +1612,7 @@ function exitPickerMode(target = 'tab') {
   clearLeds();
 
   if (target === 'chord' && chart?.data) {
-    mode = 'tab'; // 讓 enterChordMode 從乾淨狀態接手
+    mode = 'tab'; // Let enterChordMode take over from a clean state
     enterChordMode(chart.data);
     return;
   }
@@ -1641,9 +1641,9 @@ on(el.pickerBtn, 'click', () => {
   else enterPickerMode();
 });
 
-/* ---------------- 抓和弦：上傳 / YouTube ---------------- */
+/* ---------------- Detect chords: upload / YouTube ---------------- */
 
-/** 切換來源分頁（打歌名 / YouTube 連結 / 本機音檔） */
+/** Switch source tab (search by song title / YouTube link / local audio file) */
 function showPane(paneId) {
   for (const tab of document.querySelectorAll('.modal-tab')) {
     tab.classList.toggle('on', tab.dataset.pane === paneId);
@@ -1681,14 +1681,14 @@ function analysisQuery() {
   return `bpb=${bpb}&simple=${simple}`;
 }
 
-/** 伺服器需要的 API 版本；對不上就直接講「請重啟伺服器」 */
+/** Required server API version; if it does not match, tell the user to restart the server */
 const NEED_API = 9;
 
 /**
- * 讀 JSON 回應，但不要讓「拿到 HTML」變成看不懂的錯誤。
- * 直接 res.json() 遇到錯誤頁會丟
+ * Read a JSON response without turning an HTML response into an incomprehensible error.
+ * Calling res.json() directly on an error page throws
  * 「Unexpected token '<', "<!DOCTYPE "... is not valid JSON」，
- * 完全看不出該做什麼。
+ * and gives no clue what to do.
  */
 async function readJson(res) {
   const text = await res.text();
@@ -1715,9 +1715,9 @@ function setJobProgress(pct, msg) {
 }
 
 /**
- * 工作進行中就把三個來源分頁收起來，只留進度。
- * 不這樣做的話，進度會被搜尋結果推到看不見的地方，
- * 下載一首新歌要等十幾秒，使用者只會覺得「按了沒反應」。
+ * While a job is running, hide the three source tabs and show only its progress.
+ * Otherwise, search results can push the progress out of view;
+ * downloading a song takes several seconds, and the user may think "nothing happened."
  */
 function setJobRunning(running) {
   document.querySelector('.modal-card')?.classList.toggle('running', running);
@@ -1790,7 +1790,7 @@ on(el.ytBtn, 'click', () => {
   startAnalysis(youtubeRequest(url));
 });
 
-/* ---- 打歌名找歌（Songsterr 那種流程，只是後端換成我們自己的分析） ---- */
+/* ---- Search by song title (like Songsterr, but using our own analysis backend) ---- */
 
 function fmtDuration(sec) {
   if (!Number.isFinite(sec)) return '';
@@ -1884,9 +1884,9 @@ on(el.ytUrl, 'keydown', (e) => {
   if (e.key === 'Enter') el.ytBtn.click();
 });
 
-const MAX_UPLOAD_MB = 200; // 要和 server.py 的 MAX_UPLOAD 一致
+const MAX_UPLOAD_MB = 200; // Must match MAX_UPLOAD in server.py
 
-// 同一個檔案選取框，兩顆按鈕共用：記住這次要「抓和弦」還是「只分軌」
+// Both buttons share the same file picker; remember whether this is for chord detection or stem separation only
 let pendingFileAction = 'analyze';
 on(el.audioFileBtn, 'click', () => {
   pendingFileAction = 'analyze';
@@ -1905,8 +1905,8 @@ on(el.audioInput, 'change', (e) => {
   const mb = file.size / 1024 / 1024;
   if (el.fileName) el.fileName.textContent = `Selected: ${file.name} (${mb.toFixed(1)} MB)`;
 
-  // 先在這裡擋，不要傳到一半才被伺服器拒絕——那時連線已經斷了，
-  // 瀏覽器只會說「Failed to fetch」，看不出真正原因
+  // Reject it here instead of letting the server refuse it halfway through the upload—by then the connection is gone,
+  // and the browser only says "Failed to fetch," hiding the real reason
   if (mb > MAX_UPLOAD_MB) {
     return toast(
       `File is ${mb.toFixed(0)} MB, exceeding the ${MAX_UPLOAD_MB} MB limit. Convert it to MP3 before uploading: ` +
@@ -1926,8 +1926,8 @@ on(el.audioInput, 'change', (e) => {
   });
 });
 
-// 後端有問題就先講清楚，不要讓人按了半天才發現。
-// 警告要寫在兩個分頁上，因為預設看到的是「打歌名」那頁。
+// Explain backend problems right away instead of making people click around before discovering them.
+// Show the warning on both tabs because "Search by song title" is the default view.
 function warnBackend(message) {
   for (const hint of [$('search-hint'), el.ytHint]) {
     if (!hint) continue;
@@ -1957,7 +1957,7 @@ fetch('/api/health')
     if (el.chordBtn) el.chordBtn.title = 'Launch with the startup script';
   });
 
-/* ---------------- 藍牙 UI ---------------- */
+/* ---------------- Bluetooth UI ---------------- */
 
 function renderBle() {
   const s = guitar.snapshot();
@@ -1991,15 +1991,15 @@ on(el.connect, 'click', async () => {
     const res = await guitar.connect();
     if (res) {
       toast(`Connected to ${res.name || 'LiteJam'}.`);
-      // 連上先閃一下，確認燈真的通了
+      // Flash once after connecting to confirm the lights are working
       await testLeds();
     }
   } catch {
-    /* 錯誤訊息已由 error 事件顯示 */
+    /* The error event has already displayed the error message */
   }
 });
 
-// 測試動畫用的世代編號：再按一次測試、或按關燈／播放，都會讓上一輪自己停下來
+// Test-animation generation counter: starting another test, turning off the lights, or playing stops the previous run
 let ledRun = 0;
 
 async function testLeds() {
@@ -2022,7 +2022,7 @@ on(el.off, 'click', () => {
   toast('All LEDs turned off.');
 });
 
-/* ---------------- 檔案載入 ---------------- */
+/* ---------------- File loading ---------------- */
 
 async function loadFile(file) {
   if (!file) return;
@@ -2082,7 +2082,7 @@ for (const type of ['dragleave', 'drop']) {
 }
 on(el.viewport, 'drop', (e) => loadFile(e.dataTransfer?.files?.[0]));
 
-/* ---------------- 播放控制 ---------------- */
+/* ---------------- Playback controls ---------------- */
 
 on(el.play, 'click', () => {
   if (mode === 'picker') return toast('There is nothing to play in Chord Finder. Select a chord to light it.');
@@ -2159,7 +2159,7 @@ on(el.speed, 'input', () => {
   save();
 });
 
-/* ---- 音源：抓下來的音檔 或 YouTube 影片 ---- */
+/* ---- Audio source: downloaded audio or YouTube video ---- */
 
 async function setPlaySource(next) {
   const prev = clock();
@@ -2235,7 +2235,7 @@ async function setPlaySource(next) {
   if (wasPlaying) audio.play().catch(() => {});
 }
 
-/* ---- 分軌混音 ---- */
+/* ---- Stem mixer ---- */
 
 function renderMixer() {
   el.mixerTracks.innerHTML = '';
@@ -2294,9 +2294,9 @@ async function loadStems(media = chart?.data?.media) {
 
 on(el.playSource, 'change', () => setPlaySource(el.playSource.value));
 
-/* ---- 純分軌模式：不用先抓和弦，直接把音檔分軌來練 ---- */
+/* ---- Stem-only mode: separate tracks for practice without detecting chords first ---- */
 
-// 只更新時間軸與播放鍵（沒有和弦拍點要跟）
+// Update only the timeline and playback button (there are no chord beats to follow)
 function stemsTick() {
   if (mode !== 'stems') return stopChordTick();
   const src = clock();
@@ -2316,7 +2316,7 @@ async function enterStemsMode(media, title) {
   audio.pause();
   api?.stop();
 
-  // 先把軌分出來、載進 mixer（會顯示進度）。失敗就不切模式。
+  // Separate the tracks and load them into the mixer first (progress is shown); do not switch modes if this fails.
   try {
     await loadStems(media);
   } catch (err) {
@@ -2397,7 +2397,7 @@ async function separateFile(file) {
   }
 }
 
-/* ---- 分軌匯出：我設定好的混音（WAV）／全部分軌（zip） ---- */
+/* ---- Export stems: my mix (WAV) / all stems (zip) ---- */
 
 // AudioBuffer → 16-bit PCM WAV Blob
 function audioBufferToWav(buf) {
@@ -2466,7 +2466,7 @@ on(el.exportStems, 'click', () => {
   toast('Downloading all stems as a ZIP. This large file may take a while.');
 });
 
-/* ---- YouTube 影片視窗：可拖動、可縮放（位置/大小記在瀏覽器裡） ---- */
+/* ---- YouTube video window: draggable and resizable (position and size are saved in the browser) ---- */
 (function initVideoBox() {
   const box = el.videoWrap;
   if (!box || !el.videoHead) return;
@@ -2486,7 +2486,7 @@ on(el.exportStems, 'click', () => {
     try {
       localStorage.setItem(STORE, JSON.stringify({ left: r.left, top: r.top, width: r.width }));
     } catch {
-      /* 私密模式寫不進去，不影響操作 */
+      /* Writes are unavailable in private browsing; this does not affect operation */
     }
   }
 
@@ -2494,10 +2494,10 @@ on(el.exportStems, 'click', () => {
     const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
     if (saved) apply(saved);
   } catch {
-    /* 壞掉就用預設位置 */
+    /* Use the default position if the saved one is invalid */
   }
 
-  // 通用的「拖動到放開」處理：onMove 收到滑鼠位移
+  // Generic drag-until-release handling: onMove receives pointer movement
   function startDrag(handle, e, onMove) {
     e.preventDefault();
     e.stopPropagation();
@@ -2515,7 +2515,7 @@ on(el.exportStems, 'click', () => {
     handle.addEventListener('pointerup', up);
   }
 
-  // 拖標題列 → 移動位置
+  // Drag the title bar → move the window
   el.videoHead.addEventListener('pointerdown', (e) => {
     const r = box.getBoundingClientRect();
     const dx = e.clientX - r.left;
@@ -2530,7 +2530,7 @@ on(el.exportStems, 'click', () => {
     });
   });
 
-  // 拖右下角 → 縮放（只調寬度，高度由 16:9 自動）
+  // Drag the bottom-right corner → resize (adjust width only; height follows the 16:9 aspect ratio)
   el.videoResize?.addEventListener('pointerdown', (e) => {
     const startX = e.clientX;
     const startW = box.offsetWidth;
@@ -2541,13 +2541,13 @@ on(el.exportStems, 'click', () => {
   });
 })();
 
-/* ---- AI 自動抓歌詞（Demucs 分人聲 → Whisper 辨識 → 對到小節） ---- */
+/* ---- AI lyric transcription (Demucs separates vocals → Whisper transcribes → align to bars) ---- */
 
-/** 把辨識出來的句子按時間放到對應的小節上 */
+/** Place transcribed lines in the corresponding bars based on their timestamps */
 function segmentsToBarLines(segments, bars) {
   const lines = new Array(bars.length).fill('');
   for (const seg of segments) {
-    // 找出這句話的開頭落在哪個小節
+    // Find which bar the beginning of this line falls in
     let idx = bars.findIndex((b) => seg.start < b.end);
     if (idx < 0) idx = bars.length - 1;
     lines[idx] = lines[idx] ? `${lines[idx]} ${seg.text}` : seg.text;
@@ -2575,7 +2575,7 @@ on(el.autoLyrics, 'click', async () => {
     if (!segments.length) throw new Error('No lyrics were detected. The track may be instrumental.');
 
     const lines = segmentsToBarLines(segments, chart.data.bars);
-    // 去掉尾端的空行，並把起始小節挪到第一句話的位置
+    // Remove trailing blank lines and move the starting bar to the first line's position
     let first = lines.findIndex((l) => l);
     if (first < 0) first = 0;
     let last = lines.length - 1;
@@ -2608,7 +2608,7 @@ toggleButton(el.metronome, 'metronome', (v) => api && (api.metronomeVolume = v ?
 toggleButton(el.countin, 'countIn', (v) => api && (api.countInVolume = v ? 1 : 0));
 toggleButton(el.loop, 'loop', (v) => {
   if (api) api.isLooping = v;
-  // 有選段的時候由 chordTick 負責跳回起點，不能同時開 audio.loop
+  // When a section is selected, chordTick handles jumping back to the start; audio.loop must not also be enabled
   audio.loop = v && !chart?.loopRange;
   if (v && chart?.loopRange) {
     const r = chart.loopRange;
@@ -2628,7 +2628,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-/* ---------------- 顯示設定 ---------------- */
+/* ---------------- Display settings ---------------- */
 
 on(el.stave, 'change', () => {
   settings.stave = el.stave.value;
@@ -2665,7 +2665,7 @@ on(el.frets, 'input', () => {
   save();
 });
 
-/* ---- 數字簡譜 ---- */
+/* ---- Numbered notation ---- */
 
 if (el.jianpuKey && !el.jianpuKey.options.length) {
   ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F', 'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B'].forEach((name, i) => {
@@ -2708,7 +2708,7 @@ on(el.toggleFretboard, 'change', () => {
   save();
 });
 
-/* ---------------- 燈光設定 ---------------- */
+/* ---------------- LED settings ---------------- */
 
 on(el.colorMain, 'input', () => {
   settings.colorMain = el.colorMain.value;
@@ -2721,7 +2721,7 @@ on(el.colorNext, 'input', () => {
 on(el.colorPaint, 'input', () => {
   settings.colorPaint = el.colorPaint.value;
   save();
-  if (manualLeds.size) showManual(); // 立刻換色
+  if (manualLeds.size) showManual(); // Apply the color change immediately
 });
 on(el.togglePaint, 'change', () => setPaintMode(el.togglePaint.checked));
 on(el.paintClear, 'click', () => {
@@ -2748,7 +2748,7 @@ on(el.brightness, 'input', () => {
 on(el.toggleQualityColor, 'change', () => {
   settings.colorByQuality = el.toggleQualityColor.checked;
   save();
-  // 馬上反映在現在亮著的燈上
+  // Apply immediately to the currently lit LEDs
   if (mode === 'chord' && chart?.beatIndex >= 0) onChordBeat(chart.beatIndex);
   else if (mode === 'picker' && picker) picker.update();
 });
@@ -2758,13 +2758,13 @@ on(el.toggleReverse, 'change', () => {
   save();
 });
 
-/* ---------------- 版面切換 ---------------- */
+/* ---------------- Layout switch ---------------- */
 
 on(el.ig, 'click', () => {
   const on = document.body.classList.toggle('ig');
   el.ig.classList.toggle('on', on);
   fretboard.setOrientation(on ? 'vertical' : 'horizontal');
-  // 直式時螢幕變窄，改成橫向捲動譜面比較好讀
+  // In portrait orientation the screen is narrower, so horizontal score scrolling is easier to read
   requestAnimationFrame(() => api?.render());
 });
 
@@ -2782,13 +2782,13 @@ on(el.panel, 'click', () => {
   requestAnimationFrame(() => api?.render());
 });
 
-// 使用者沒有自己動過的話，面板跟著視窗寬度自動收放
+// Automatically resize the panel with the window unless the user has changed it manually
 window.addEventListener('resize', () => {
   if (panelToggledByUser) return;
   document.body.classList.toggle('no-panel', window.innerWidth <= 900);
 });
 
-/* ---------------- 啟動 ---------------- */
+/* ---------------- Startup ---------------- */
 
 function applySettingsToUi() {
   el.colorMain.value = settings.colorMain;
@@ -2835,7 +2835,7 @@ window.addEventListener('beforeunload', () => {
   if (guitar.status === 'connected') guitar.ledOff();
 });
 
-// 開發／除錯用：主控台可以直接摸到內部物件
+// For development/debugging: access internal objects directly from the console
 window.glowtab = {
   get api() {
     return api;
