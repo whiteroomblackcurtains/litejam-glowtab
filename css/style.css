@@ -1958,3 +1958,13 @@ body.ig .chordpicker {
     display: none;
   }
 }
+
+.chord-analysis {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+}
+.chord-analysis[hidden] { display: none; }
+.tab-chord-name { color: #2ecc71; font-weight: 700; }

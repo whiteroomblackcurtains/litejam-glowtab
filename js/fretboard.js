@@ -1,6 +1,7 @@
 // 螢幕上的指板鏡像：把送到吉他的燈同步畫出來
 // 用途一是沒接琴也能確認整條資料流正確，用途二是錄 IG 短影音的畫面主體。
 
+const SHARED_OVERLAY = { hex: '#ff6ec7', text: '#2b0020' };
 const STRING_GAUGE = [3.4, 3.0, 2.6, 2.2, 1.9, 1.6]; // 第6弦最粗 → 第1弦最細
 
 export class FretboardView {
@@ -14,6 +15,8 @@ export class FretboardView {
     this.orientation = 'horizontal'; // horizontal | vertical
     /** @type {Array<{leds:Array<{fret:number,strings:number[]}>, color:{r:number,g:number,b:number}}>} */
     this.groups = [];
+    /** 和弦分析的綠色疊圖：每個變化型 { notes:[{string,fret}] }，畫在譜上音符的下層 */
+    this.overlay = [];
     this._raf = null;
     this._pulse = 0;
 
@@ -104,6 +107,30 @@ export class FretboardView {
   clear() {
     this.groups = [];
     this.draw();
+  }
+
+  setOverlay(variants) {
+    this.overlay = variants ?? [];
+    this.draw();
+  }
+
+  _overlayDot(n, color, label, r) {
+    const ctx = this.ctx;
+    const p = this._dot(n.string, n.fret);
+    ctx.save();
+    ctx.shadowColor = color.hex;
+    ctx.shadowBlur = r * 1.4;
+    ctx.fillStyle = color.hex;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = color.text;
+    const size = label.length > 1 ? r * 0.72 : r * 1.05;
+    ctx.font = `bold ${Math.max(7, size)}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, p.x, p.y + 0.5);
   }
 
   /** 格號 → 沿著琴頸方向的座標比例（0=空弦標記區，1=最後一格） */
@@ -246,6 +273,23 @@ export class FretboardView {
 
     // 亮燈
     const r = Math.max(5, short * 0.062);
+
+    // 和弦分析疊圖：每個指型各一色（編號 = 沿琴頸由低到高的順序）；被多個指型共用的音畫粉紅色
+    const shared = new Map();
+    this.overlay.forEach((v, idx) => {
+      for (const n of v.notes) {
+        if (!n.shared) {
+          this._overlayDot(n, v.color, String(idx + 1), r);
+        } else {
+          const k = `${n.string}:${n.fret}`;
+          if (!shared.has(k)) shared.set(k, { n, ids: [] });
+          shared.get(k).ids.push(idx + 1);
+        }
+      }
+    });
+    for (const { n, ids } of shared.values()) {
+      this._overlayDot(n, SHARED_OVERLAY, ids.join('/'), r);
+    }
     for (const g of this.groups) {
       const css = `rgb(${g.color.r},${g.color.g},${g.color.b})`;
       for (const led of g.leds) {

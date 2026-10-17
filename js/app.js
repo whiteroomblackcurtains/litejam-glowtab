@@ -16,6 +16,7 @@ import {
 import { melodySummary, melodyToTex } from './solotab.js';
 import { jianpuHtml, scoreToJianpu } from './jianpu.js';
 import { VideoPlayer } from './videosync.js';
+import { SHARED_COLOR, analyzeTrack, inversionVoicings, segmentAt } from './tabchords.js';
 import { StemMixer } from './mixer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -68,6 +69,10 @@ const el = {
   tuningSave: $('btn-tuning-save'),
   tuningReset: $('btn-tuning-reset'),
   toggleNext: $('toggle-next'),
+  tabChordBtn: $('btn-tab-chords'),
+  tabChordCount: $('tab-chord-count'),
+  tabChordName: $('tab-chord-name'),
+  tabChordDetail: $('tab-chord-detail'),
   brightness: $('brightness'),
   brightnessOut: $('brightness-out'),
   toggleReverse: $('toggle-reverse'),
@@ -323,6 +328,7 @@ function initAlphaTab() {
   api.playerReady.on(() => busy(null));
 
   api.scoreLoaded.on((score) => {
+    resetTabChords();
     scoreLoaded = true;
     el.dropHint.classList.add('hide');
     el.title.textContent = score.title || '(Untitled)';
@@ -378,6 +384,7 @@ function renderTrackList(score) {
     row.querySelector('.track-name').textContent = track.name || `Track ${track.index + 1}`;
     row.addEventListener('click', () => {
       api.renderTracks([track]);
+      resetTabChords();
       [...el.tracks.children].forEach((c) => c.classList.remove('active'));
       row.classList.add('active');
     });
@@ -502,17 +509,119 @@ async function animateBends(bends, baseGroups, run) {
     if (lit.length) {
       const groups = [...baseGroups, { leds: packNotes(lit), color }];
       fretboard.setGroups(groups);
-      if (guitar.status === 'connected') guitar.sendSegment(groups);
+      if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
     }
     await new Promise((r) => setTimeout(r, 85));
   }
 }
 
+/* ---------------- 譜面和弦分析（彩色疊圖，也會送到琴上） ---------------- */
+
+let tabChords = null; // { segments, current, variants }
+let lastBeat = null;
+
+/** 疊圖的燈組：每個指型一色，被共用的音合併成一組粉紅色 */
+function overlayLedGroups() {
+  const variants = tabChords?.variants ?? [];
+  if (!variants.length) return [];
+  const b = settings.brightness / 100;
+  const groups = [];
+  const pink = new Map();
+  for (const v of variants) {
+    const own = [];
+    for (const n of v.notes) {
+      if (n.shared) pink.set(`${n.string}:${n.fret}`, n);
+      else own.push({ string: hwString(n.string), fret: n.fret });
+    }
+    if (own.length) groups.push({ leds: packNotes(own), color: scaleColor(hexToRgb(v.color.hex), b) });
+  }
+  if (pink.size) {
+    const notes = [...pink.values()].map((n) => ({ string: hwString(n.string), fret: n.fret }));
+    groups.push({ leds: packNotes(notes), color: scaleColor(hexToRgb(SHARED_COLOR.hex), b) });
+  }
+  return groups;
+}
+
+/** 暫停或剛按下分析時，把目前的譜面燈加疊圖重送給琴 */
+function resendLeds() {
+  if (guitar.status !== 'connected') return;
+  guitar.sendSegment([...overlayLedGroups(), ...currentGroups(lastBeat)]);
+}
+
+function showTabChord(seg) {
+  if (!tabChords) return;
+  if ((seg?.name ?? null) === (tabChords.current?.name ?? null) && !tabChords.dirty) return;
+  tabChords.current = seg;
+  tabChords.dirty = false;
+  if (!seg) {
+    tabChords.variants = [];
+    fretboard.setOverlay([]);
+    resendLeds();
+    el.tabChordName.textContent = '';
+    el.tabChordDetail.textContent = '';
+    return;
+  }
+  const limit = Number(el.tabChordCount.value) || 5;
+  const variants = inversionVoicings(seg.root, seg.quality, settings.tuning, limit);
+  tabChords.variants = variants;
+  fretboard.setOverlay(variants);
+  resendLeds();
+  el.tabChordName.textContent = seg.name;
+  el.tabChordDetail.replaceChildren();
+  variants.forEach((v, i) => {
+    const s = document.createElement('span');
+    s.style.color = v.color.hex;
+    s.style.textShadow = '0 0 1px #000';
+    s.textContent = `${i + 1}: ${v.label}`;
+    if (i) el.tabChordDetail.append(' · ');
+    el.tabChordDetail.append(s);
+  });
+}
+
+function analyzeTabChords() {
+  const track = api?.tracks?.[0];
+  if (!track) {
+    toast('Load a tab first', true);
+    return;
+  }
+  const segments = analyzeTrack(track);
+  if (!segments.length) {
+    toast('No chords could be detected in this track', true);
+    return;
+  }
+  tabChords = { segments, current: null, dirty: true };
+  el.tabChordBtn.textContent = 'Re-analyse Tab Chords';
+  toast(`Found ${new Set(segments.map((s) => s.name)).size} chords in ${segments.length} sections`);
+  showTabChord(segments[0]);
+}
+
+function resetTabChords() {
+  const had = tabChords?.variants?.length;
+  tabChords = null;
+  fretboard.setOverlay([]);
+  el.tabChordName.textContent = '';
+  el.tabChordDetail.textContent = '';
+  el.tabChordBtn.textContent = 'Analyse Tab Chords';
+  if (had) resendLeds();
+}
+
+on(el.tabChordBtn, 'click', analyzeTabChords);
+on(el.tabChordCount, 'change', () => {
+  if (tabChords) {
+    tabChords.dirty = true;
+    showTabChord(tabChords.current);
+  }
+});
+
 function onBeat(beat) {
+  lastBeat = beat;
+  if (tabChords && beat?.absolutePlaybackStart != null) {
+    showTabChord(segmentAt(tabChords.segments, beat.absolutePlaybackStart));
+  }
   const run = ++bendRun; // 取消上一拍還在滑的推弦動畫
   const groups = currentGroups(beat);
   fretboard.setGroups(groups);
-  if (guitar.status === 'connected') guitar.sendSegment(groups);
+  if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
   const bends = bendTargets(beat);
   if (bends.length) animateBends(bends, groups, run);
 }
