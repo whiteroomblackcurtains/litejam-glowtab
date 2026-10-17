@@ -21,6 +21,96 @@ export const VARIANT_COLORS = [
 ];
 export const SHARED_COLOR = { name: 'pink', hex: '#ff6ec7', text: '#2b0020' };
 
+/**
+ * 可選的和弦類型（音程 = 離根音的半音數，>12 表示高八度的延伸音）。
+ * 13 和弦照慣例省略 11 音。
+ */
+const T = (id, intervals) => ({ id, intervals });
+export const CHORD_TYPES = [
+  T('Major', [0, 4, 7]),
+  T('Minor', [0, 3, 7]),
+  T('7', [0, 4, 7, 10]),
+  T('5', [0, 7]),
+  T('dim', [0, 3, 6]),
+  T('dim7', [0, 3, 6, 9]),
+  T('aug', [0, 4, 8]),
+  T('sus2', [0, 2, 7]),
+  T('sus4', [0, 5, 7]),
+  T('maj7', [0, 4, 7, 11]),
+  T('m7', [0, 3, 7, 10]),
+  T('7sus4', [0, 5, 7, 10]),
+  T('maj9', [0, 4, 7, 11, 14]),
+  T('maj11', [0, 4, 7, 11, 14, 17]),
+  T('maj13', [0, 4, 7, 11, 14, 21]),
+  T('maj9#11', [0, 4, 7, 11, 14, 18]),
+  T('maj13#11', [0, 4, 7, 11, 14, 18, 21]),
+  T('add9', [0, 4, 7, 14]),
+  T('6add9', [0, 4, 7, 9, 14]),
+  T('maj7b5', [0, 4, 6, 11]),
+  T('maj7#5', [0, 4, 8, 11]),
+  T('m6', [0, 3, 7, 9]),
+  T('m9', [0, 3, 7, 10, 14]),
+  T('m11', [0, 3, 7, 10, 14, 17]),
+  T('m13', [0, 3, 7, 10, 14, 21]),
+  T('madd9', [0, 3, 7, 14]),
+  T('m6add9', [0, 3, 7, 9, 14]),
+  T('mmaj7', [0, 3, 7, 11]),
+  T('mmaj9', [0, 3, 7, 11, 14]),
+  T('m7b5', [0, 3, 6, 10]),
+  T('m7#5', [0, 3, 8, 10]),
+  T('6', [0, 4, 7, 9]),
+  T('9', [0, 4, 7, 10, 14]),
+  T('11', [0, 4, 7, 10, 14, 17]),
+  T('13', [0, 4, 7, 10, 14, 21]),
+  T('7b5', [0, 4, 6, 10]),
+  T('7#5', [0, 4, 8, 10]),
+  T('7b9', [0, 4, 7, 10, 13]),
+  T('7#9', [0, 4, 7, 10, 15]),
+  T('7(b5,b9)', [0, 4, 6, 10, 13]),
+  T('7(b5,#9)', [0, 4, 6, 10, 15]),
+  T('7(#5,b9)', [0, 4, 8, 10, 13]),
+  T('7(#5,#9)', [0, 4, 8, 10, 15]),
+  T('9b5', [0, 4, 6, 10, 14]),
+  T('9#5', [0, 4, 8, 10, 14]),
+  T('13#11', [0, 4, 7, 10, 14, 18, 21]),
+  T('13b9', [0, 4, 7, 10, 13, 21]),
+  T('11b9', [0, 4, 7, 10, 13, 17]),
+  T('sus2sus4', [0, 2, 5, 7]),
+  T('-5', [0, 4, 6]),
+];
+const TYPE_BY_ID = new Map(CHORD_TYPES.map((t) => [t.id, t]));
+
+export function chordTypeIntervals(id) {
+  return TYPE_BY_ID.get(id)?.intervals ?? null;
+}
+
+/** 音域有限時優先保留根音、三度／掛留音和擴展張力，五度（7）最先省略 */
+function toneRank(interval, hasThird) {
+  switch (interval) {
+    case 0: return 0;
+    case 3: case 4: return 1;
+    case 2: case 5: return hasThird ? 5 : 1; // 沒有三度時 sus 音就是和弦特徵
+    case 6: case 8: return 2;
+    case 13: case 15: case 18: return 2.2;
+    case 21: return 2.2;
+    case 14: case 17: return 2.4;
+    case 9: return 2.6;
+    case 10: case 11: return 3;
+    case 7: return 9;
+    default: return 6;
+  }
+}
+
+/** 挑出最多 count 個音，優先保留根音、三度／掛留音和選定的延伸音 */
+export function pickTones(intervals, count) {
+  if (intervals.length <= count) return [...intervals];
+  const hasThird = intervals.some((i) => i === 3 || i === 4);
+  return [...intervals]
+    .sort((a, b) => toneRank(a, hasThird) - toneRank(b, hasThird) || a - b)
+    .slice(0, count)
+    .sort((a, b) => a - b);
+}
+
 // 辨識用的和弦種類；越前面越優先（分數相同時）
 const QUALITIES = ['maj', 'min', '7', 'm7', 'maj7', 'sus4', 'sus2', 'dim', 'aug', '5'];
 
@@ -136,15 +226,24 @@ export function segmentAt(segments, tick) {
  * 指型沿著琴頸（前 12 格內）由低把位往高把位排開，盡量輪流用不同轉位、
  * 不同的最低弦（根音可在任何一條弦）。顏色綠／橘交替，相鄰指型不會同色。
  * @param {number} root pitch class
- * @param {string} quality
+ * @param {string|number[]} quality 辨識出的種類（如 'maj'）或音程陣列
  * @param {number[]} tuning 第1弦→第6弦的 MIDI
  * @param {number} limit 最多幾個（1–5）
+ * @param {{notes?:number, maxFret?:number}} opts notes = 每個指型幾條弦（3–5）；
+ *   和弦音比弦少時重複音（例如加倍根音），比弦多時依重要性省略（先省五度）
  * @returns {Array<{inversion:number,label:string,bass:number,frets:Array<number|null>,notes:Array<{string:number,fret:number}>}>}
  */
-export function inversionVoicings(root, quality, tuning, limit = 5, maxFret = 12) {
-  const degrees = QUALITY_DEGREES[quality] ?? QUALITY_DEGREES.maj;
-  const tones = degrees.map((d) => (root + d) % 12);
-  const pool = allShapes(tones, tuning, maxFret);
+export function inversionVoicings(root, quality, tuning, limit = 5, opts = {}) {
+  const maxFret = opts.maxFret ?? 12;
+  const degrees = Array.isArray(quality) ? quality : QUALITY_DEGREES[quality] ?? QUALITY_DEGREES.maj;
+  const chosen = opts.notes ? pickTones(degrees, opts.notes) : pickTones(degrees, 5);
+  const tones = chosen.map((d) => (root + d) % 12);
+  const size = opts.notes ? Math.min(6, Math.max(opts.notes, 2)) : tones.length;
+  // 音靠得很近的和弦（如 madd9）在標準指距內可能湊不出來，就逐步放寬指距
+  let pool = [];
+  for (let span = size >= 5 ? 4 : 3; span <= 6 && !pool.length; span++) {
+    pool = allShapes(tones, tuning, maxFret, size, span);
+  }
   if (!pool.length) return [];
 
   const out = [];
@@ -197,9 +296,8 @@ export function inversionVoicings(root, quality, tuning, limit = 5, maxFret = 12
  * 湊齊全部和弦音、手指跨度 ≤ 3 格、全在 maxFret 之內。
  * 最低弦的音決定是第幾轉位，所以根音可以落在六條弦的任何一條。
  */
-function allShapes(tones, tuning, maxFret) {
+function allShapes(tones, tuning, maxFret, size, maxSpan) {
   const toneSet = new Set(tones);
-  const size = tones.length;
   const out = [];
   for (let low = 6; low - size + 1 >= 1; low--) {
     const strings = [];
@@ -218,16 +316,17 @@ function allShapes(tones, tuning, maxFret) {
         const fretted = used.filter((f) => f > 0);
         const lo = fretted.length ? Math.min(...fretted) : 0;
         const hi = fretted.length ? Math.max(...fretted) : 0;
-        if (hi - lo > 3) return;
+        if (hi - lo > maxSpan) return;
         // 開放弦只在低把位才算同一個把位，免得高把位混進開放弦
-        if (used.includes(0) && hi > 4) return;
+        if (used.includes(0) && hi > maxSpan + 1) return;
         const bassPc = (tuning[low - 1] + frets[low - 1]) % 12;
         out.push({
           inv: tones.indexOf(bassPc),
           lowString: low,
           frets: frets.slice(),
           minFret: lo,
-          cost: (hi - lo) * 2 - used.filter((f) => f === 0).length * 0.3,
+          // 重複的音（和弦音比弦少時）稍微扣分，讓不重複的指型優先
+          cost: (hi - lo) * 2 - used.filter((f) => f === 0).length * 0.3 + (size - pcs.size) * 0.5,
         });
         return;
       }

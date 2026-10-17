@@ -389,8 +389,16 @@
 
           <div id="fretboard-wrap" class="fretboard-wrap">
             <div class="chord-analysis" id="tab-chord-bar">
-              <button id="btn-tab-chords" class="btn" title="Analyse the loaded tab and show chord inversions in green">Analyse Tab Chords</button>
-              <label class="small muted">Inversions
+              <button id="btn-tab-chords" class="btn" title="Analyse the loaded tab and display chord voicings on the fretboard">Analyse Tab Chords</button>
+              <label class="small muted">Notes per inversion
+                <select id="tab-chord-notes" title="Number of notes in each inversion voicing">
+                  <option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                </select>
+              </label>
+              <label class="small muted">Chord
+                <select id="tab-chord-type" title="Chord type to display"></select>
+              </label>
+              <label class="small muted">Variants
                 <select id="tab-chord-count">
                   <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
                 </select>

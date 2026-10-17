@@ -16,7 +16,7 @@ import {
 import { melodySummary, melodyToTex } from './solotab.js';
 import { jianpuHtml, scoreToJianpu } from './jianpu.js';
 import { VideoPlayer } from './videosync.js';
-import { SHARED_COLOR, analyzeTrack, inversionVoicings, segmentAt } from './tabchords.js';
+import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionVoicings, segmentAt } from './tabchords.js';
 import { StemMixer } from './mixer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -71,6 +71,8 @@ const el = {
   toggleNext: $('toggle-next'),
   tabChordBtn: $('btn-tab-chords'),
   tabChordCount: $('tab-chord-count'),
+  tabChordNotes: $('tab-chord-notes'),
+  tabChordType: $('tab-chord-type'),
   tabChordName: $('tab-chord-name'),
   tabChordDetail: $('tab-chord-detail'),
   brightness: $('brightness'),
@@ -562,11 +564,14 @@ function showTabChord(seg) {
     return;
   }
   const limit = Number(el.tabChordCount.value) || 5;
-  const variants = inversionVoicings(seg.root, seg.quality, settings.tuning, limit);
+  const notes = Number(el.tabChordNotes.value) || 3;
+  const typeId = el.tabChordType.value;
+  const intervals = typeId ? chordTypeIntervals(typeId) : seg.quality;
+  const variants = inversionVoicings(seg.root, intervals, settings.tuning, limit, { notes });
   tabChords.variants = variants;
   fretboard.setOverlay(variants);
   resendLeds();
-  el.tabChordName.textContent = seg.name;
+  el.tabChordName.textContent = typeId ? `${seg.name.match(/^[A-G][#b]?/)[0]} ${typeId}` : seg.name;
   el.tabChordDetail.replaceChildren();
   variants.forEach((v, i) => {
     const s = document.createElement('span');
@@ -606,12 +611,16 @@ function resetTabChords() {
 }
 
 on(el.tabChordBtn, 'click', analyzeTabChords);
-on(el.tabChordCount, 'change', () => {
-  if (tabChords) {
-    tabChords.dirty = true;
-    showTabChord(tabChords.current);
-  }
-});
+el.tabChordType.append(new Option('Auto (from tab)', ''));
+for (const t of CHORD_TYPES) el.tabChordType.append(new Option(t.id, t.id));
+for (const sel of [el.tabChordCount, el.tabChordNotes, el.tabChordType]) {
+  on(sel, 'change', () => {
+    if (tabChords) {
+      tabChords.dirty = true;
+      showTabChord(tabChords.current);
+    }
+  });
+}
 
 function onBeat(beat) {
   lastBeat = beat;
