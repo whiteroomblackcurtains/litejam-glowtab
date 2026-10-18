@@ -135,14 +135,26 @@
               <span>Scale Name</span>
               <input id="scale-name" type="text" maxlength="60" placeholder="e.g. D Harmonic Minor" />
             </label>
+            <label class="row">
+              <span>Scale Root Color</span>
+              <input id="scale-root-color" type="color" value="#ff4d4d" />
+            </label>
+            <label class="row">
+              <span>Scale Note Color</span>
+              <input id="scale-note-color" type="color" value="#4d8bff" />
+            </label>
             <div class="row gap">
               <button id="btn-scale-save" class="btn btn-sm" disabled>Save Custom Scale</button>
             </div>
-            <p class="muted small">Enter ascending semitone intervals above the root (1–11), separated by commas. Include 6–11 intervals for 7–12 notes total. The root is red; other notes are blue.</p>
+            <p class="muted small">Enter ascending semitone intervals above the root (1–11), separated by commas. Include 6–11 intervals for 7–12 notes total.</p>
             <div class="row gap">
               <button id="btn-scale-send" class="btn btn-sm btn-primary">Show and Send Scale</button>
               <button id="btn-scale-clear" class="btn btn-sm">Clear Scale</button>
             </div>
+            <label class="row">
+              <input id="toggle-scale-with-tab" type="checkbox" />
+              <span>Show Scale with Tab Song</span>
+            </label>
 
             <hr class="panel-sep" />
             <h3>Guitar Tuning</h3>

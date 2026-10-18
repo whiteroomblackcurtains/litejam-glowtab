@@ -55,6 +55,9 @@ const el = {
   scalePreset: $('scale-preset'),
   scaleIntervals: $('scale-intervals'),
   scaleName: $('scale-name'),
+  scaleRootColor: $('scale-root-color'),
+  scaleNoteColor: $('scale-note-color'),
+  toggleScaleWithTab: $('toggle-scale-with-tab'),
   scaleSave: $('btn-scale-save'),
   scaleAccountStatus: $('scale-account-status'),
   googleLogin: $('btn-google-login'),
@@ -222,6 +225,9 @@ function load() {
     colorMain: '#00e5ff',
     colorNext: '#ff2d95',
     colorPaint: '#39ff14',
+    colorScaleRoot: '#ff4d4d',
+    colorScaleNote: '#4d8bff',
+    showScaleWithTab: false,
     showNext: true,
     brightness: 85,
     reverseStrings: false,
@@ -352,6 +358,7 @@ function initAlphaTab() {
 
   api.playerStateChanged.on((e) => {
     const playing = e.state === 1; // 1 = Playing
+    scorePlaying = playing;
     el.play.textContent = playing ? '⏸' : '▶';
     if (playing) ledRun++; // Starting playback cancels any running test animation
     else clearLeds();
@@ -548,7 +555,8 @@ function overlayLedGroups() {
 /** Resend the current score lights and overlay to the guitar when paused or just after analysis starts */
 function resendLeds() {
   if (guitar.status !== 'connected') return;
-  guitar.sendSegment([...overlayLedGroups(), ...currentGroups(lastBeat)]);
+  const scale = scorePlaying ? scaleWithTabGroups() : [];
+  guitar.sendSegment([...overlayLedGroups(), ...scale, ...currentGroups(lastBeat)]);
 }
 
 function showTabChord(seg) {
@@ -607,14 +615,14 @@ function analyzeTabChords() {
   showTabChord(segments[0]);
 }
 
-function resetTabChords() {
+function resetTabChords(redraw = true) {
   const had = tabChords?.variants?.length;
   tabChords = null;
   fretboard.setOverlay([]);
   el.tabChordName.textContent = '';
   el.tabChordDetail.textContent = '';
   el.tabChordBtn.textContent = 'Analyse Tab Chords';
-  if (had) resendLeds();
+  if (had && redraw) resendLeds();
 }
 
 on(el.tabChordBtn, 'click', analyzeTabChords);
@@ -635,7 +643,7 @@ function onBeat(beat) {
     showTabChord(segmentAt(tabChords.segments, beat.absolutePlaybackStart));
   }
   const run = ++bendRun; // Cancel the bend animation still sliding from the previous beat
-  const groups = currentGroups(beat);
+  const groups = [...scaleWithTabGroups(), ...currentGroups(beat)];
   fretboard.setGroups(groups);
   if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
   const bends = bendTargets(beat);
@@ -643,9 +651,84 @@ function onBeat(beat) {
 }
 
 let scaleActive = false;
+let scorePlaying = false;
 
 let scalePresets = {};
 let scaleAuth = null;
+
+function readScaleDefinition() {
+  const intervalsText = el.scaleIntervals.value.trim();
+  const intervalParts = intervalsText ? intervalsText.split(',').map((part) => part.trim()) : [];
+  const intervals = intervalParts.map(Number);
+  if (
+    intervals.length < 6 ||
+    intervals.length > 11 ||
+    intervals.some((interval, index) =>
+      !/^\d+$/.test(intervalParts[index]) ||
+      interval < 1 ||
+      interval > 11 ||
+      (index > 0 && interval <= intervals[index - 1])
+    )
+  ) return null;
+  return { root: Number(el.scaleRoot.value), intervals };
+}
+
+function scaleWithTabGroups() {
+  if (!settings.showScaleWithTab) return [];
+  const definition = readScaleDefinition();
+  if (!definition) return [];
+
+  const scale = new Set([
+    definition.root,
+    ...definition.intervals.map((interval) => (definition.root + interval) % 12),
+  ]);
+  const rootNotes = [];
+  const otherNotes = [];
+  for (let string = 1; string <= settings.tuning.length; string++) {
+    for (let fret = 0; fret <= MAX_FRET; fret++) {
+      const pitchClass = (settings.tuning[string - 1] + fret) % 12;
+      if (!scale.has(pitchClass)) continue;
+      const note = { string: hwString(string), fret };
+      (pitchClass === definition.root ? rootNotes : otherNotes).push(note);
+    }
+  }
+
+  const brightness = settings.brightness / 100;
+  return [
+    { leds: packNotes(rootNotes), color: scaleColor(hexToRgb(settings.colorScaleRoot), brightness) },
+    { leds: packNotes(otherNotes), color: scaleColor(hexToRgb(settings.colorScaleNote), brightness) },
+  ];
+}
+
+function refreshScaleWithTabDisplay() {
+  if (!settings.showScaleWithTab || !scorePlaying || !lastBeat) return;
+  const groups = [...scaleWithTabGroups(), ...currentGroups(lastBeat)];
+  fretboard.setGroups(groups);
+  if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+}
+
+function setScaleWithTab(enabled) {
+  if (enabled && !readScaleDefinition()) {
+    el.toggleScaleWithTab.checked = false;
+    toast('Enter 6–11 ascending semitone intervals (1–11) before showing a scale with the tab.', true);
+    return;
+  }
+  settings.showScaleWithTab = enabled;
+  el.tabChordBtn.disabled = enabled;
+  save();
+  if (enabled) {
+    resetTabChords(false);
+    clearLeds();
+    return;
+  }
+  if (scorePlaying && lastBeat) {
+    const groups = currentGroups(lastBeat);
+    fretboard.setGroups(groups);
+    if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+  } else {
+    clearLeds();
+  }
+}
 
 async function loadScalePresets() {
   try {
@@ -760,6 +843,7 @@ on(el.scalePreset, 'change', () => {
 
   el.scaleRoot.value = rootOption.value;
   el.scaleIntervals.value = preset.Intervals;
+  refreshScaleWithTabDisplay();
 });
 
 function clearLeds() {
@@ -774,16 +858,8 @@ function clearLeds() {
 }
 
 function sendScale() {
-  const intervalsText = el.scaleIntervals.value.trim();
-  const intervalParts = intervalsText ? intervalsText.split(',').map((part) => part.trim()) : [];
-  const intervals = intervalParts.map(Number);
-  if (
-    intervals.length < 6 ||
-    intervals.length > 11 ||
-    intervals.some((interval, index) =>
-      !/^\d+$/.test(intervalParts[index]) || interval < 1 || interval > 11 || (index > 0 && interval <= intervals[index - 1])
-    )
-  ) {
+  const definition = readScaleDefinition();
+  if (!definition) {
     toast('Enter 6–11 ascending semitone intervals (1–11) for 7–12 notes including the root.', true);
     return;
   }
@@ -795,8 +871,8 @@ function sendScale() {
     clearLeds();
   }
 
-  const root = Number(el.scaleRoot.value);
-  const scale = new Set([root, ...intervals.map((interval) => (root + interval) % 12)]);
+  const { root } = definition;
+  const scale = new Set([root, ...definition.intervals.map((interval) => (root + interval) % 12)]);
   const rootNotes = [];
   const otherNotes = [];
   for (let string = 1; string <= settings.tuning.length; string++) {
@@ -810,8 +886,8 @@ function sendScale() {
 
   const brightness = settings.brightness / 100;
   const groups = [
-    { leds: packNotes(rootNotes), color: scaleColor({ r: 255, g: 0, b: 0 }, brightness) },
-    { leds: packNotes(otherNotes), color: scaleColor({ r: 0, g: 0, b: 255 }, brightness) },
+    { leds: packNotes(rootNotes), color: scaleColor(hexToRgb(settings.colorScaleRoot), brightness) },
+    { leds: packNotes(otherNotes), color: scaleColor(hexToRgb(settings.colorScaleNote), brightness) },
   ];
   scaleActive = true;
   fretboard.setFrets(MAX_FRET);
@@ -2731,6 +2807,27 @@ on(el.paintClear, 'click', () => {
 on(el.scaleSend, 'click', sendScale);
 on(el.scaleClear, 'click', clearScale);
 on(el.scaleSave, 'click', saveCustomScale);
+on(el.toggleScaleWithTab, 'change', () => setScaleWithTab(el.toggleScaleWithTab.checked));
+on(el.scaleRoot, 'change', refreshScaleWithTabDisplay);
+on(el.scaleIntervals, 'input', refreshScaleWithTabDisplay);
+on(el.scaleIntervals, 'change', () => {
+  if (settings.showScaleWithTab && !readScaleDefinition()) {
+    setScaleWithTab(false);
+    toast('Scale display turned off because the interval list is invalid.', true);
+  }
+});
+on(el.scaleRootColor, 'input', () => {
+  settings.colorScaleRoot = el.scaleRootColor.value;
+  save();
+  if (scaleActive) sendScale();
+  refreshScaleWithTabDisplay();
+});
+on(el.scaleNoteColor, 'input', () => {
+  settings.colorScaleNote = el.scaleNoteColor.value;
+  save();
+  if (scaleActive) sendScale();
+  refreshScaleWithTabDisplay();
+});
 loadScalePresets();
 setChordTuning(settings.tuning);
 buildTuningSelects();
@@ -2794,6 +2891,10 @@ function applySettingsToUi() {
   el.colorMain.value = settings.colorMain;
   el.colorNext.value = settings.colorNext;
   if (el.colorPaint) el.colorPaint.value = settings.colorPaint;
+  el.scaleRootColor.value = settings.colorScaleRoot;
+  el.scaleNoteColor.value = settings.colorScaleNote;
+  el.toggleScaleWithTab.checked = settings.showScaleWithTab;
+  el.tabChordBtn.disabled = settings.showScaleWithTab;
   el.toggleNext.checked = settings.showNext;
   el.brightness.value = String(settings.brightness);
   el.brightnessOut.textContent = `${settings.brightness}%`;

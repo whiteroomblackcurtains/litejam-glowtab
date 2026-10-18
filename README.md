@@ -63,6 +63,8 @@ Built-in presets (Standard, Drop D, Half Step Down, DADGAD) are available to eve
 
 Standard tuning keeps the original behaviour: a score's own string and fret numbers are sent unchanged. In a custom tuning, score pitches are normally used to calculate positions so a file written in another tuning still sounds correctly. If the score already encodes its intended tuning, turn off **Use custom tuning for score note positions** to send its original string and fret positions unchanged. This choice is remembered in the browser.
 
+In the **Scale Lighting** panel, enable **Show Scale with Tab Song** to keep the selected scale lit while a Guitar Pro score plays. Current tab notes take visual and LED priority when they overlap scale notes. Choose separate colors for the scale root and its other notes. This option is off by default and disables tab chord analysis while enabled.
+
 ## Usage
 
 1. Click **Open Score** or drag a Guitar Pro (`.gp` / `.gp3` / `.gp4` / `.gp5` / `.gpx`), MusicXML, or Capella file into the window. MIDI files cannot be imported.
