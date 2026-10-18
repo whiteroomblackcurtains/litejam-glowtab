@@ -65,6 +65,8 @@ Standard tuning keeps the original behaviour: a score's own string and fret numb
 
 In the **Scale Lighting** panel, enable **Show Scale with Tab Song** to keep the selected scale lit while a Guitar Pro score plays. Current tab notes take visual and LED priority when they overlap scale notes. Choose separate colors for the scale root and its other notes. This option is off by default and disables tab chord analysis while enabled.
 
+The **Scale Preset** dropdown includes 22 built-in scale patterns in all 12 sharp-named keys. Pentatonic scales contain five notes; other presets range from six to eight notes.
+
 ## Usage
 
 1. Click **Open Score** or drag a Guitar Pro (`.gp` / `.gp3` / `.gp4` / `.gp5` / `.gpx`), MusicXML, or Capella file into the window. MIDI files cannot be imported.

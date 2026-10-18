@@ -656,12 +656,27 @@ let scorePlaying = false;
 let scalePresets = {};
 let scaleAuth = null;
 
+function populateScalePresetOptions(selectedName = '') {
+  const rootNote = el.scaleRoot.selectedOptions[0]?.textContent.trim();
+  const matchingScales = Object.values(scalePresets)
+    .filter((scale) => scale['Root Note'] === rootNote)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  el.scalePreset.replaceChildren(new Option('Choose a scale…', ''));
+  for (const scale of matchingScales) {
+    const label = scale.isDefault ? scale.name : `${scale.name} (Saved)`;
+    el.scalePreset.add(new Option(label, scale.name));
+  }
+  if (matchingScales.some((scale) => scale.name === selectedName)) {
+    el.scalePreset.value = selectedName;
+  }
+}
+
 function readScaleDefinition() {
   const intervalsText = el.scaleIntervals.value.trim();
   const intervalParts = intervalsText ? intervalsText.split(',').map((part) => part.trim()) : [];
   const intervals = intervalParts.map(Number);
   if (
-    intervals.length < 6 ||
+    intervals.length < 4 ||
     intervals.length > 11 ||
     intervals.some((interval, index) =>
       !/^\d+$/.test(intervalParts[index]) ||
@@ -710,7 +725,7 @@ function refreshScaleWithTabDisplay() {
 function setScaleWithTab(enabled) {
   if (enabled && !readScaleDefinition()) {
     el.toggleScaleWithTab.checked = false;
-    toast('Enter 6–11 ascending semitone intervals (1–11) before showing a scale with the tab.', true);
+    toast('Enter 4–11 ascending semitone intervals (1–11) before showing a scale with the tab.', true);
     return;
   }
   settings.showScaleWithTab = enabled;
@@ -745,12 +760,7 @@ async function loadScalePresets() {
     scaleAuth = auth;
     scalePresets = Object.fromEntries(data.scales.map((scale) => [scale.name, scale]));
     const selected = el.scalePreset.value;
-    el.scalePreset.replaceChildren(new Option('Choose a scale…', ''));
-    for (const scale of data.scales) {
-      const label = scale.isDefault ? scale.name : `${scale.name} (Saved)`;
-      el.scalePreset.add(new Option(label, scale.name));
-    }
-    if (scalePresets[selected]) el.scalePreset.value = selected;
+    populateScalePresetOptions(selected);
 
     if (auth.authenticated) {
       el.scaleAccountStatus.textContent = `Signed in as ${auth.user.email}`;
@@ -860,7 +870,7 @@ function clearLeds() {
 function sendScale() {
   const definition = readScaleDefinition();
   if (!definition) {
-    toast('Enter 6–11 ascending semitone intervals (1–11) for 7–12 notes including the root.', true);
+    toast('Enter 4–11 ascending semitone intervals (1–11) for 5–12 notes including the root.', true);
     return;
   }
 
@@ -2808,7 +2818,12 @@ on(el.scaleSend, 'click', sendScale);
 on(el.scaleClear, 'click', clearScale);
 on(el.scaleSave, 'click', saveCustomScale);
 on(el.toggleScaleWithTab, 'change', () => setScaleWithTab(el.toggleScaleWithTab.checked));
-on(el.scaleRoot, 'change', refreshScaleWithTabDisplay);
+on(el.scaleRoot, 'change', () => {
+  const selected = scalePresets[el.scalePreset.value];
+  const rootNote = el.scaleRoot.selectedOptions[0]?.textContent.trim();
+  populateScalePresetOptions(selected?.['Root Note'] === rootNote ? selected.name : '');
+  refreshScaleWithTabDisplay();
+});
 on(el.scaleIntervals, 'input', refreshScaleWithTabDisplay);
 on(el.scaleIntervals, 'change', () => {
   if (settings.showScaleWithTab && !readScaleDefinition()) {

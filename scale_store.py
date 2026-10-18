@@ -12,9 +12,34 @@ from urllib.request import Request, urlopen
 
 DB_PATH = Path(os.environ.get('LITEJAM_DB_PATH', Path.home() / '.litejam-glowtab' / 'scales.sqlite3'))
 ROOT_NOTES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
-DEFAULT_SCALES = (
-    ('C Major', 'C', '2,4,5,7,9,11'),
-    ('C Minor', 'C', '2,3,5,7,8,10'),
+SCALE_PATTERNS = (
+    ('Major', '2,4,5,7,9,11'),
+    ('Minor', '2,3,5,7,8,10'),
+    ('Harmonic Minor', '2,3,5,7,8,11'),
+    ('Harmonic Major', '2,4,5,7,8,11'),
+    ('Melodic Minor', '2,3,5,7,9,11'),
+    ('Melodic Major', '2,4,5,7,8,10'),
+    ('Ionian', '2,4,5,7,9,11'),
+    ('Dorian', '2,3,5,7,9,10'),
+    ('Phrygian', '1,3,5,7,8,10'),
+    ('Lydian', '2,4,6,7,9,11'),
+    ('Mixolydian', '2,4,5,7,9,10'),
+    ('Aeolian', '2,3,5,7,8,10'),
+    ('Locrian', '1,3,5,6,8,10'),
+    ('Minor Pentatonic', '3,5,7,10'),
+    ('Major Pentatonic', '2,4,7,9'),
+    ('Blues', '2,3,4,7,9'),
+    ('Blues Pentatonic', '3,5,6,10'),
+    ('Blues Diminished', '2,3,4,6,7,9,10'),
+    ('Blues Minor', '3,5,6,7,10'),
+    ('Diminished', '2,3,5,6,8,9,11'),
+    ('Augmented', '3,4,7,8,11'),
+    ('Altered', '1,3,4,6,8,10'),
+)
+DEFAULT_SCALES = tuple(
+    (f'{root_note} {name}', root_note, intervals)
+    for root_note in ROOT_NOTES
+    for name, intervals in SCALE_PATTERNS
 )
 # Open-string MIDI notes (C4 = 60), string 1 (thinnest) first.
 TUNING_MIN_MIDI = 35  # B1
@@ -110,8 +135,8 @@ def validate_scale(name, root_note, intervals):
     if not isinstance(intervals, str):
         raise ValueError('Intervals must be comma-separated semitones.')
     parts = [part.strip() for part in intervals.split(',')]
-    if not 6 <= len(parts) <= 11 or any(not re.fullmatch(r'\d+', part) for part in parts):
-        raise ValueError('Enter 6–11 ascending intervals between 1 and 11.')
+    if not 4 <= len(parts) <= 11 or any(not re.fullmatch(r'\d+', part) for part in parts):
+        raise ValueError('Enter 4–11 ascending intervals between 1 and 11.')
     values = [int(part) for part in parts]
     if any(value < 1 or value > 11 for value in values) or any(a >= b for a, b in zip(values, values[1:])):
         raise ValueError('Intervals must be strictly ascending values between 1 and 11.')
