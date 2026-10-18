@@ -14,6 +14,7 @@ const equivalentScales = [
   { name: 'C Major', 'Root Note': 'C', Intervals: '2,4,5,7,9,11', isDefault: true },
   { name: 'A Minor', 'Root Note': 'A', Intervals: '2,3,5,7,8,10', isDefault: true },
   { name: 'C Phrygian', 'Root Note': 'C', Intervals: '1,3,5,7,8,10', isDefault: true },
+  { name: 'C Melodic Minor', 'Root Note': 'C', Intervals: '2,3,5,7,9,11', isDefault: true },
   { name: 'C Saved Scale', 'Root Note': 'C', Intervals: '1,3,5,6,8,10', isDefault: false },
 ];
 
@@ -36,7 +37,19 @@ test('scale recommendations rank chord-fitting families by selected mood', () =>
 test('scale recommendations handle unsupported styles and missing chords', () => {
   assert.deepEqual(recommendScales([], equivalentScales, 'mood:happy'), []);
   assert.deepEqual(recommendScales(cMajorAndAMinor, equivalentScales, 'unknown'), []);
+  assert.deepEqual(recommendScales(cMajorAndAMinor, equivalentScales, 'none'), []);
   assert.deepEqual(recommendScales(cMajorAndAMinor, [], 'mood:happy'), []);
   assert.deepEqual(recommendScales(cMajorAndAMinor, undefined, 'mood:happy'), []);
   assert.deepEqual(recommendScales(undefined, equivalentScales, 'mood:happy'), []);
+});
+
+test('Metal can recommend melodic minor above a match threshold', () => {
+  const chord = [{ root: 0, quality: 'maj' }];
+  const metal = recommendScales(chord, equivalentScales, 'genre:metal', 22, 60);
+  const filteredMetal = recommendScales(chord, equivalentScales, 'genre:metal', 22, 70);
+
+  assert.ok(Math.abs(metal.find((scale) => scale.name === 'C Melodic Minor').fit - 200 / 3) < 1e-10);
+  assert.ok(!filteredMetal.some((scale) => scale.name === 'C Melodic Minor'));
+  assert.ok(filteredMetal.some((scale) => scale.name === 'C Major'));
+  assert.ok(filteredMetal.every((scale) => scale.fit >= 70));
 });

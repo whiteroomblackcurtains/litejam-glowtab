@@ -82,6 +82,7 @@ const el = {
   tabChordDetail: $('tab-chord-detail'),
   tabScaleStyle: $('tab-scale-style'),
   tabScaleChordCount: $('tab-scale-chord-count'),
+  tabScaleMinimumFit: $('tab-scale-minimum-fit'),
   tabScaleBehavior: $('tab-scale-behavior'),
   tabScaleEntireSong: $('tab-scale-entire-song'),
   tabScaleRecommendations: $('tab-scale-recommendations'),
@@ -604,7 +605,8 @@ function updateTabScaleRecommendation(segment) {
     reference.segments,
     Object.values(scalePresets),
     tabScaleAnalysis.style,
-    5
+    22,
+    tabScaleAnalysis.minimumFit
   );
   const previousName = tabScaleAnalysis.selected?.name;
   tabScaleAnalysis.candidates = candidates;
@@ -613,15 +615,15 @@ function updateTabScaleRecommendation(segment) {
 
   if (!candidates.length) {
     activeTabScale = null;
-    el.tabScaleRecommendations.add(new Option('No suitable scale found', ''));
+    el.tabScaleRecommendations.add(new Option('No scales meet the minimum match', ''));
     el.tabScaleRecommendations.disabled = true;
-    el.tabScaleResult.textContent = 'No built-in scale matched the analyzed chord group.';
+    el.tabScaleResult.textContent = `No scales meet the ${tabScaleAnalysis.minimumFit}% chord-note match. Lower the minimum or analyze a different chord group.`;
     return;
   }
 
   for (const candidate of candidates) {
     el.tabScaleRecommendations.add(
-      new Option(`${candidate.name} (${Math.round(candidate.fit)}% chord fit)`, candidate.name)
+      new Option(`${candidate.name} (${Math.round(candidate.fit)}% chord-note match)`, candidate.name)
     );
   }
   el.tabScaleRecommendations.value = tabScaleAnalysis.selected.name;
@@ -635,15 +637,25 @@ function updateTabScaleRecommendation(segment) {
 }
 
 function configureTabScaleAnalysis() {
-  if (!tabChords || !el.tabScaleStyle.value) {
+  if (!tabChords) {
     tabScaleAnalysis = null;
     activeTabScale = null;
-    el.tabScaleRecommendations.replaceChildren(new Option('Choose a mood or genre', ''));
+    el.tabScaleRecommendations.replaceChildren(new Option('Run Analyse Tab Chords first', ''));
     el.tabScaleRecommendations.disabled = true;
-    el.tabScaleResult.textContent = 'Choose a mood or genre, then run Analyse Tab Chords to find compatible scales.';
+    el.tabScaleResult.textContent = 'Run Analyse Tab Chords to find scale suggestions. None leaves the tab notes and chord overlays without a scale.';
     return;
   }
 
+  if (el.tabScaleStyle.value === 'none') {
+    tabScaleAnalysis = null;
+    activeTabScale = null;
+    el.tabScaleRecommendations.replaceChildren(new Option('No scale selected', ''));
+    el.tabScaleRecommendations.disabled = true;
+    el.tabScaleResult.textContent = 'No scale selected. Tab notes and chord overlays remain visible.';
+    return;
+  }
+
+  const configuredMinimum = Number(el.tabScaleMinimumFit.value);
   tabScaleAnalysis = {
     style: el.tabScaleStyle.value,
     chordCount: Math.max(
@@ -653,6 +665,9 @@ function configureTabScaleAnalysis() {
         Math.floor(Number(el.tabScaleChordCount.value)) || 2
       )
     ),
+    minimumFit: Number.isFinite(configuredMinimum)
+      ? Math.max(0, Math.min(100, configuredMinimum))
+      : 50,
     behavior: el.tabScaleBehavior.value,
     entireSong: el.tabScaleEntireSong.checked,
     lastWindowKey: null,
@@ -663,8 +678,8 @@ function configureTabScaleAnalysis() {
 }
 
 function refreshScaleWithTabDisplay() {
-  if ((!settings.showScaleWithTab && !activeTabScale && !tabChords) || !scorePlaying || !lastBeat) return;
-  const groups = [...scaleWithTabGroups(), ...currentGroups(lastBeat)];
+  if (!settings.showScaleWithTab && !activeTabScale && !tabChords) return;
+  const groups = [...(scorePlaying ? scaleWithTabGroups() : []), ...currentGroups(lastBeat)];
   fretboard.setGroups(groups);
   if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
 }
@@ -749,7 +764,7 @@ function resetTabChords(redraw = true) {
   activeTabScale = null;
   el.tabScaleRecommendations.replaceChildren(new Option('Run Analyse Tab Chords first', ''));
   el.tabScaleRecommendations.disabled = true;
-  el.tabScaleResult.textContent = 'Choose a mood or genre, then run Analyse Tab Chords to find compatible scales.';
+  el.tabScaleResult.textContent = 'Run Analyse Tab Chords to find scale suggestions. None leaves the tab notes and chord overlays without a scale.';
   if (hadDisplay && redraw) resendLeds();
 }
 
@@ -781,6 +796,7 @@ function recomputeTabScaleAnalysis() {
 for (const control of [
   el.tabScaleStyle,
   el.tabScaleChordCount,
+  el.tabScaleMinimumFit,
   el.tabScaleBehavior,
   el.tabScaleEntireSong,
 ]) {

@@ -19,7 +19,7 @@ const GENRE_FAMILIES = {
   'genre:blues': ['Blues Minor', 'Blues', 'Minor Pentatonic', 'Mixolydian'],
   'genre:classical': ['Major', 'Minor', 'Harmonic Minor', 'Harmonic Major', 'Melodic Minor'],
   'genre:dance': ['Major', 'Minor', 'Mixolydian', 'Dorian'],
-  'genre:extreme-metal': ['Locrian', 'Altered', 'Diminished', 'Phrygian'],
+  'genre:extreme-metal': ['Locrian', 'Altered', 'Diminished', 'Phrygian', 'Melodic Minor', 'Blues Diminished'],
   'genre:flamenco': ['Phrygian', 'Harmonic Minor', 'Diminished', 'Altered'],
   'genre:folk': ['Major', 'Major Pentatonic', 'Dorian', 'Aeolian'],
   'genre:funk': ['Dorian', 'Mixolydian', 'Blues', 'Minor Pentatonic'],
@@ -29,7 +29,10 @@ const GENRE_FAMILIES = {
   'genre:hymns': ['Major', 'Ionian', 'Lydian', 'Major Pentatonic'],
   'genre:indie': ['Major Pentatonic', 'Dorian', 'Mixolydian', 'Lydian'],
   'genre:jazz': ['Dorian', 'Melodic Minor', 'Altered', 'Lydian', 'Mixolydian'],
-  'genre:metal': ['Phrygian', 'Locrian', 'Harmonic Minor', 'Diminished'],
+  'genre:metal': [
+    'Phrygian', 'Harmonic Minor', 'Melodic Minor', 'Locrian', 'Diminished',
+    'Blues Diminished', 'Altered', 'Harmonic Major', 'Augmented',
+  ],
   'genre:pop': ['Major', 'Major Pentatonic', 'Ionian', 'Mixolydian'],
   'genre:progressive-rock': ['Lydian', 'Dorian', 'Melodic Minor', 'Harmonic Minor'],
   'genre:r-and-b': ['Dorian', 'Minor Pentatonic', 'Blues Minor', 'Mixolydian'],
@@ -46,10 +49,10 @@ function scaleFamily(scale) {
 
 /**
  * Rank built-in scales against a group of tab-analyzed chords.
- * Chord-tone and root coverage determine musical fit; the selected mood or
- * genre only breaks close matches toward an appropriate scale family.
+ * Chord-tone match is the reported fit; root coverage and style preferences
+ * influence ordering. Return the best-fitting root for each scale family.
  */
-export function recommendScales(segments, presets, styleId, limit = 5) {
+export function recommendScales(segments, presets, styleId, limit = 22, minimumFit = 0) {
   const familyPreferences = MOOD_FAMILIES[styleId] ?? GENRE_FAMILIES[styleId];
   if (
     !familyPreferences ||
@@ -87,16 +90,23 @@ export function recommendScales(segments, presets, styleId, limit = 5) {
     const family = scaleFamily(scale);
     const preferenceRank = preferences.get(family);
     const styleBonus = preferenceRank === undefined ? 0 : (familyPreferences.length - preferenceRank) * 1.4;
-    const fit = (chordToneCoverage / totalTones) * 85 + (chordRootCoverage / segments.length) * 15;
+    const fit = (chordToneCoverage / totalTones) * 100;
+    if (fit < minimumFit) continue;
+    const score = fit * 0.85 + (chordRootCoverage / segments.length) * 15 + styleBonus;
     scored.push({
       ...scale,
-      score: fit + styleBonus,
+      score,
       fit,
       family,
     });
   }
 
-  return scored
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    .slice(0, limit);
+  const ranked = [];
+  const seenFamilies = new Set();
+  for (const scale of scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))) {
+    if (seenFamilies.has(scale.family)) continue;
+    seenFamilies.add(scale.family);
+    ranked.push(scale);
+  }
+  return ranked.slice(0, limit);
 }

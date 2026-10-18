@@ -159,7 +159,7 @@
             <label class="row">
               <span>Mood / Genre</span>
               <select id="tab-scale-style">
-                <option value="">Choose a mood or genre…</option>
+                <option value="none" selected>None — do not display a scale</option>
                 <optgroup label="Moods">
                   <option value="mood:happy">Happy / Bright / Optimistic</option>
                   <option value="mood:sad">Sad / Serious / Introspective</option>
@@ -198,9 +198,14 @@
                 </optgroup>
               </select>
             </label>
+            <p class="muted small">Mood and genre only influence scale recommendations, not chord detection or chord display. Choose None to show no recommended scale.</p>
             <label class="row">
               <span>Chord references</span>
               <input id="tab-scale-chord-count" type="number" min="2" step="1" value="4" />
+            </label>
+            <label class="row">
+              <span>Minimum chord-note match (%)</span>
+              <input id="tab-scale-minimum-fit" type="number" min="0" max="100" step="5" value="50" />
             </label>
             <label class="row">
               <span>Scale changes</span>
@@ -219,7 +224,7 @@
                 <option value="">Run Analyse Tab Chords first</option>
               </select>
             </label>
-            <p id="tab-scale-result" class="muted small">Choose a mood or genre, then run Analyse Tab Chords to find compatible scales.</p>
+            <p id="tab-scale-result" class="muted small">Run Analyse Tab Chords to find scale suggestions. None leaves the tab notes and chord overlays without a scale.</p>
 
             <hr class="panel-sep" />
             <h3>Guitar Tuning</h3>
