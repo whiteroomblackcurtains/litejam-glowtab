@@ -3,7 +3,14 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 
 import scale_store
-from scale_store import DEFAULT_SCALES, ROOT_NOTES, SCALE_PATTERNS, save_scales, validate_scale
+from scale_store import (
+    DEFAULT_SCALES,
+    ROOT_NOTES,
+    SCALE_PATTERNS,
+    delete_scale,
+    save_scales,
+    validate_scale,
+)
 
 
 class DefaultScaleTests(unittest.TestCase):
@@ -118,6 +125,42 @@ class DefaultScaleTests(unittest.TestCase):
                 self.assertEqual(
                     [scale for scale in scale_store.list_scales(user_id) if not scale['isDefault']],
                     [],
+                )
+        finally:
+            scale_store.DB_PATH = original_path
+
+    def test_deleting_one_custom_scale_removes_all_its_roots_for_that_user_only(self):
+        original_path = scale_store.DB_PATH
+        try:
+            with TemporaryDirectory() as directory:
+                scale_store.DB_PATH = Path(directory) / 'scales.sqlite3'
+                scale_store.init_db()
+                with scale_store.connect() as db:
+                    first_user = db.execute(
+                        'INSERT INTO users (google_sub, email, created_at) VALUES (?, ?, ?)',
+                        ('first-user', 'first@example.com', 1),
+                    ).lastrowid
+                    second_user = db.execute(
+                        'INSERT INTO users (google_sub, email, created_at) VALUES (?, ?, ?)',
+                        ('second-user', 'second@example.com', 1),
+                    ).lastrowid
+
+                save_scales(first_user, 'C Custom Mode', 'C', '2,3,5,7,9,11', True)
+                save_scales(second_user, 'C Custom Mode', 'C', '2,3,5,7,9,11', True)
+                self.assertEqual(delete_scale(first_user, 'G Custom Mode', 'G'), len(ROOT_NOTES))
+                self.assertEqual(
+                    [scale for scale in scale_store.list_scales(first_user) if not scale['isDefault']],
+                    [],
+                )
+                self.assertEqual(
+                    len([scale for scale in scale_store.list_scales(second_user) if not scale['isDefault']]),
+                    len(ROOT_NOTES),
+                )
+                with self.assertRaisesRegex(ValueError, 'user-created'):
+                    delete_scale(first_user, 'C Major', 'C')
+                self.assertIn(
+                    'C Major',
+                    {scale['name'] for scale in scale_store.list_scales(first_user)},
                 )
         finally:
             scale_store.DB_PATH = original_path

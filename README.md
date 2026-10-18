@@ -67,6 +67,7 @@ In the **Scale Lighting** panel, enable **Show Scale with Tab Song** to keep the
 
 The **Scale Preset** dropdown includes 22 built-in scale patterns in all 12 sharp-named keys. Pentatonic scales contain five notes; other presets range from six to eight notes.
 When saving a custom scale, **Add this scale for all root notes** is checked by default and saves the same interval pattern under each of the 12 roots in your account. Clear it to save only the selected root.
+Select a saved custom scale and choose **Delete Selected Scale** to remove it and its matching root variants from your account. Built-in scales cannot be deleted.
 
 The **Tab Scale Analysis** controls in the Scale Lighting panel work with **Analyse Tab Chords**. **None** is the default and displays no recommended scale; tab notes remain visible. Choose a mood or genre to rank scale suggestions without changing chord detection or display. Recommendations include a range of scale families, showing the best-fitting key for each family. Set the **Minimum chord-note match (%)** to filter out scales below your threshold.
 

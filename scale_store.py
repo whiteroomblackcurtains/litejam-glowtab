@@ -210,6 +210,42 @@ def save_scales(user_id, name, root_note, intervals, all_root_notes=False):
     return saved
 
 
+def delete_scale(user_id, name, root_note):
+    if not isinstance(name, str) or not name.strip() or root_note not in ROOT_NOTES:
+        raise ValueError('Choose a valid user scale to delete.')
+
+    with connect() as db:
+        selected = db.execute(
+            'SELECT name FROM scales '
+            'WHERE owner_id = ? AND name = ? COLLATE NOCASE AND root_note = ? AND is_default = 0',
+            (user_id, name.strip(), root_note),
+        ).fetchone()
+        if not selected:
+            raise ValueError('Only a selected user-created scale can be deleted.')
+
+        selected_name = selected['name']
+        root_prefix = next(
+            (
+                f'{root} '
+                for root in ROOT_NOTES
+                if selected_name.casefold().startswith(f'{root} '.casefold())
+            ),
+            None,
+        )
+        names = (
+            [f'{root} {selected_name[len(root_prefix):]}' for root in ROOT_NOTES]
+            if root_prefix
+            else [selected_name]
+        )
+        placeholders = ','.join('?' for _ in names)
+        cursor = db.execute(
+            f'DELETE FROM scales WHERE owner_id = ? AND is_default = 0 '
+            f'AND name COLLATE NOCASE IN ({placeholders})',
+            (user_id, *names),
+        )
+        return cursor.rowcount
+
+
 def validate_tuning(name, notes):
     name = (name or '').strip()
     if not name or len(name) > 60:

@@ -66,6 +66,7 @@ const el = {
   googleLogout: $('btn-google-logout'),
   scaleSend: $('btn-scale-send'),
   scaleClear: $('btn-scale-clear'),
+  scaleDelete: $('btn-scale-delete'),
   tuningPreset: $('tuning-preset'),
   tuningStrings: $('tuning-strings'),
   tuningSummary: $('tuning-summary'),
@@ -860,6 +861,12 @@ function populateScalePresetOptions(selectedName = '') {
   if (matchingScales.some((scale) => scale.name === selectedName)) {
     el.scalePreset.value = selectedName;
   }
+  updateScaleDeleteButton();
+}
+
+function updateScaleDeleteButton() {
+  const selected = scalePresets[el.scalePreset.value];
+  el.scaleDelete.disabled = !scaleAuth?.authenticated || !selected || selected.isDefault;
 }
 
 function readScaleDefinition() {
@@ -963,6 +970,7 @@ async function loadScalePresets() {
       el.googleLogout.hidden = true;
     }
     el.scaleSave.disabled = !auth.authenticated;
+    updateScaleDeleteButton();
   } catch (error) {
     console.error('Failed to load scale presets:', error);
     toast('Unable to load scale presets.', true);
@@ -994,6 +1002,7 @@ async function saveCustomScale() {
     const rootNote = payload.rootNote;
     const selectedScale = savedScales.find((scale) => scale['Root Note'] === rootNote) ?? savedScales[0];
     el.scalePreset.value = selectedScale.name;
+    updateScaleDeleteButton();
     toast(
       payload.allRootNotes
         ? `Saved ${savedScales.length} scales for all root notes.`
@@ -1003,6 +1012,35 @@ async function saveCustomScale() {
     toast(error?.message ?? String(error), true);
   } finally {
     el.scaleSave.disabled = !scaleAuth?.authenticated;
+  }
+}
+
+async function deleteCustomScale() {
+  const scale = scalePresets[el.scalePreset.value];
+  if (!scaleAuth?.authenticated || !scale || scale.isDefault) {
+    updateScaleDeleteButton();
+    return;
+  }
+  if (!window.confirm(`Delete "${scale.name}" and its saved versions for all root notes? This cannot be undone.`)) {
+    return;
+  }
+
+  el.scaleDelete.disabled = true;
+  try {
+    const response = await fetch('/api/scales', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: scale.name, rootNote: scale['Root Note'] }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
+    await loadScalePresets();
+    el.scalePreset.value = '';
+    updateScaleDeleteButton();
+    toast(`Deleted ${result.deletedCount} custom scale${result.deletedCount === 1 ? '' : 's'}.`);
+  } catch (error) {
+    toast(error?.message ?? String(error), true);
+    updateScaleDeleteButton();
   }
 }
 
@@ -1035,6 +1073,7 @@ if (authError) {
 }
 
 on(el.scalePreset, 'change', () => {
+  updateScaleDeleteButton();
   const preset = scalePresets[el.scalePreset.value];
   if (!preset) return;
 
@@ -3012,6 +3051,7 @@ on(el.paintClear, 'click', () => {
 on(el.scaleSend, 'click', sendScale);
 on(el.scaleClear, 'click', clearScale);
 on(el.scaleSave, 'click', saveCustomScale);
+on(el.scaleDelete, 'click', deleteCustomScale);
 on(el.toggleScaleWithTab, 'change', () => setScaleWithTab(el.toggleScaleWithTab.checked));
 on(el.scaleRoot, 'change', () => {
   const selected = scalePresets[el.scalePreset.value];

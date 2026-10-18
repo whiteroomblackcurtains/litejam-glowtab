@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from scale_store import (
     create_oauth_state,
     create_session,
+    delete_scale,
     delete_session,
     get_session_user,
     google_identity,
@@ -844,6 +845,34 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     # ------------------------------------------------------------ POST
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        if parsed.path != '/api/scales':
+            return self.fail('Not found.', 404)
+        if not self.same_origin_request():
+            return self.fail('Request origin could not be verified.', 403)
+
+        user = self.current_user()
+        if not user:
+            return self.fail('Sign in with Google to delete personal scales.', 401)
+
+        length = self.content_length()
+        if length <= 0 or length > 16 * 1024:
+            return self.fail('Scale data is missing or too large.')
+        try:
+            payload = json.loads(self.read_body(length).decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self.fail('Request body is not valid JSON.')
+        if not isinstance(payload, dict):
+            return self.fail('Request body must be a JSON object.')
+        try:
+            deleted_count = delete_scale(
+                user['id'], payload.get('name'), payload.get('rootNote')
+            )
+        except (AttributeError, ValueError) as exc:
+            return self.fail(str(exc))
+        return self.send_json({'deletedCount': deleted_count})
 
     def do_POST(self):
         parsed = urlparse(self.path)
