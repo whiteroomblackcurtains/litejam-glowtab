@@ -314,6 +314,12 @@ select {
   font-size: 12px;
 }
 
+#tab-scale-style {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+}
+
 .scale-interval-row input {
   flex: 1;
   min-width: 0;

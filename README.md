@@ -67,9 +67,9 @@ In the **Scale Lighting** panel, enable **Show Scale with Tab Song** to keep the
 
 The **Scale Preset** dropdown includes 22 built-in scale patterns in all 12 sharp-named keys. Pentatonic scales contain five notes; other presets range from six to eight notes.
 
-The **Tab Scale Analysis** controls in the Scale Lighting panel work with **Analyse Tab Chords**. **None** is the default and displays no recommended scale; tab notes and chord overlays remain visible. Choose a mood or genre to rank scale suggestions without changing chord detection or display. Recommendations include a range of scale families, showing the best-fitting key for each family. Set the **Minimum chord-note match (%)** to filter out scales below your threshold.
+The **Tab Scale Analysis** controls in the Scale Lighting panel work with **Analyse Tab Chords**. **None** is the default and displays no recommended scale; tab notes remain visible. Choose a mood or genre to rank scale suggestions without changing chord detection or display. Recommendations include a range of scale families, showing the best-fitting key for each family. Set the **Minimum chord-note match (%)** to filter out scales below your threshold.
 
-Set how many chord sections to reference (at least two) and whether the recommendation changes as chord groups progress or stays based on the opening group. **Analyze entire song for one scale** instead searches all detected chord sections for a single recommendation. Selected scales light alongside the playing tab, and tab notes temporarily take priority on both the fretboard and connected LEDs.
+Set how many chord sections to reference (at least two) and whether the recommendation changes as chord groups progress or stays based on the opening group. **Analyze entire song for one scale** instead searches all detected chord sections for a single recommendation. **Also show chord inversions** is off by default; enable it to display the analyzed chord voicings alongside tab notes and any selected scale. Selected scales light alongside the playing tab, and tab notes temporarily take priority on both the fretboard and connected LEDs.
 
 ## Usage
 

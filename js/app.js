@@ -85,6 +85,7 @@ const el = {
   tabScaleMinimumFit: $('tab-scale-minimum-fit'),
   tabScaleBehavior: $('tab-scale-behavior'),
   tabScaleEntireSong: $('tab-scale-entire-song'),
+  tabScaleShowChordInversions: $('tab-scale-show-chord-inversions'),
   tabScaleRecommendations: $('tab-scale-recommendations'),
   tabScaleResult: $('tab-scale-result'),
   brightness: $('brightness'),
@@ -543,6 +544,7 @@ const SCALE_ROOT_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 
 
 /** Overlay light groups: one color per shape, with shared notes combined into a pink group */
 function overlayLedGroups() {
+  if (!el.tabScaleShowChordInversions.checked) return [];
   const variants = tabChords?.variants ?? [];
   if (!variants.length) return [];
   const b = settings.brightness / 100;
@@ -623,7 +625,7 @@ function updateTabScaleRecommendation(segment) {
 
   for (const candidate of candidates) {
     el.tabScaleRecommendations.add(
-      new Option(`${candidate.name} (${Math.round(candidate.fit)}% chord-note match)`, candidate.name)
+      new Option(`${candidate.name} (${Math.round(candidate.fit)}%)`, candidate.name)
     );
   }
   el.tabScaleRecommendations.value = tabScaleAnalysis.selected.name;
@@ -718,7 +720,7 @@ function showTabChord(seg) {
     : seg.quality;
   const variants = inversionVoicings(seg.root, intervals, settings.tuning, limit, { notes });
   tabChords.variants = variants;
-  fretboard.setOverlay(variants);
+  fretboard.setOverlay(el.tabScaleShowChordInversions.checked ? variants : []);
   resendLeds();
   const rootName = seg.name.match(/^[A-G][#b]?/)[0];
   el.tabChordName.textContent = typeId
@@ -769,6 +771,12 @@ function resetTabChords(redraw = true) {
 }
 
 on(el.tabChordBtn, 'click', analyzeTabChords);
+on(el.tabScaleShowChordInversions, 'change', () => {
+  fretboard.setOverlay(
+    el.tabScaleShowChordInversions.checked ? tabChords?.variants ?? [] : []
+  );
+  resendLeds();
+});
 el.tabChordType.append(new Option('Auto (from tab)', ''));
 for (const t of CHORD_TYPES) el.tabChordType.append(new Option(t.id, t.id));
 for (const sel of [el.tabChordCount, el.tabChordNotes, el.tabChordType, el.tabChordFullExtension]) {
