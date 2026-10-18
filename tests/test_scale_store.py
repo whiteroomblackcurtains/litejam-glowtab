@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 
 import scale_store
-from scale_store import DEFAULT_SCALES, ROOT_NOTES, SCALE_PATTERNS, validate_scale
+from scale_store import DEFAULT_SCALES, ROOT_NOTES, SCALE_PATTERNS, save_scales, validate_scale
 
 
 class DefaultScaleTests(unittest.TestCase):
@@ -57,6 +57,68 @@ class DefaultScaleTests(unittest.TestCase):
                 self.assertTrue(all(preset['isDefault'] for preset in presets))
                 self.assertIn('C Major', {preset['name'] for preset in presets})
                 self.assertIn('B Altered', {preset['name'] for preset in presets})
+        finally:
+            scale_store.DB_PATH = original_path
+
+    def test_custom_scale_can_be_saved_for_every_root_note(self):
+        original_path = scale_store.DB_PATH
+        try:
+            with TemporaryDirectory() as directory:
+                scale_store.DB_PATH = Path(directory) / 'scales.sqlite3'
+                scale_store.init_db()
+                with scale_store.connect() as db:
+                    user_id = db.execute(
+                        'INSERT INTO users (google_sub, email, created_at) VALUES (?, ?, ?)',
+                        ('test-user', 'test@example.com', 1),
+                    ).lastrowid
+
+                scales = save_scales(user_id, 'C Custom Mode', 'C', '2,3,5,7,9,11', True)
+                self.assertEqual(len(scales), len(ROOT_NOTES))
+                self.assertEqual(
+                    [(scale['name'], scale['Root Note']) for scale in scales],
+                    [(f'{root} Custom Mode', root) for root in ROOT_NOTES],
+                )
+                self.assertEqual({scale['Intervals'] for scale in scales}, {'2,3,5,7,9,11'})
+                self.assertEqual(len([
+                    scale for scale in scale_store.list_scales(user_id)
+                    if not scale['isDefault']
+                ]), len(ROOT_NOTES))
+
+                updated = save_scales(user_id, 'C Custom Mode', 'C', '2,3,5,7,9,10', True)
+                self.assertEqual(len(updated), len(ROOT_NOTES))
+                self.assertEqual({scale['Intervals'] for scale in updated}, {'2,3,5,7,9,10'})
+                self.assertEqual(len([
+                    scale for scale in scale_store.list_scales(user_id)
+                    if not scale['isDefault']
+                ]), len(ROOT_NOTES))
+                single_root = save_scales(
+                    user_id, 'One Root Scale', 'D', '2,4,5,7', False
+                )
+                self.assertEqual(len(single_root), 1)
+                self.assertEqual(single_root[0]['Root Note'], 'D')
+                with self.assertRaisesRegex(ValueError, 'boolean'):
+                    save_scales(user_id, 'Invalid Option', 'D', '2,4,5,7', 'false')
+        finally:
+            scale_store.DB_PATH = original_path
+
+    def test_all_root_scale_validation_is_atomic(self):
+        original_path = scale_store.DB_PATH
+        try:
+            with TemporaryDirectory() as directory:
+                scale_store.DB_PATH = Path(directory) / 'scales.sqlite3'
+                scale_store.init_db()
+                with scale_store.connect() as db:
+                    user_id = db.execute(
+                        'INSERT INTO users (google_sub, email, created_at) VALUES (?, ?, ?)',
+                        ('test-user', 'test@example.com', 1),
+                    ).lastrowid
+
+                with self.assertRaisesRegex(ValueError, 'reserved'):
+                    save_scales(user_id, 'C Major', 'C', '2,4,5,7,9,11', True)
+                self.assertEqual(
+                    [scale for scale in scale_store.list_scales(user_id) if not scale['isDefault']],
+                    [],
+                )
         finally:
             scale_store.DB_PATH = original_path
 

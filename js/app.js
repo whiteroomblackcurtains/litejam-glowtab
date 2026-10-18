@@ -56,6 +56,7 @@ const el = {
   scalePreset: $('scale-preset'),
   scaleIntervals: $('scale-intervals'),
   scaleName: $('scale-name'),
+  scaleAllRoots: $('scale-all-roots'),
   scaleRootColor: $('scale-root-color'),
   scaleNoteColor: $('scale-note-color'),
   toggleScaleWithTab: $('toggle-scale-with-tab'),
@@ -977,6 +978,7 @@ async function saveCustomScale() {
     name: el.scaleName.value,
     rootNote: el.scaleRoot.selectedOptions[0]?.textContent.trim(),
     intervals: el.scaleIntervals.value,
+    allRootNotes: el.scaleAllRoots.checked,
   };
   el.scaleSave.disabled = true;
   try {
@@ -988,8 +990,15 @@ async function saveCustomScale() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
     await loadScalePresets();
-    el.scalePreset.value = result.scale.name;
-    toast(`Saved scale: ${result.scale.name}`);
+    const savedScales = result.scales ?? [result.scale];
+    const rootNote = payload.rootNote;
+    const selectedScale = savedScales.find((scale) => scale['Root Note'] === rootNote) ?? savedScales[0];
+    el.scalePreset.value = selectedScale.name;
+    toast(
+      payload.allRootNotes
+        ? `Saved ${savedScales.length} scales for all root notes.`
+        : `Saved scale: ${selectedScale.name}`
+    );
   } catch (error) {
     toast(error?.message ?? String(error), true);
   } finally {

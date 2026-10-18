@@ -35,7 +35,7 @@ from scale_store import (
     init_db,
     list_scales,
     list_tunings,
-    save_scale,
+    save_scales,
     save_tuning,
     upsert_google_user,
     consume_oauth_state,
@@ -883,12 +883,19 @@ class Handler(SimpleHTTPRequestHandler):
                 if parsed.path == '/api/tunings':
                     tuning = save_tuning(user['id'], payload.get('name'), payload.get('notes'))
                     return self.send_json({'tuning': tuning}, 201)
-                scale = save_scale(
-                    user['id'], payload.get('name'), payload.get('rootNote'), payload.get('intervals')
+                all_root_notes = payload.get('allRootNotes', False)
+                scales = save_scales(
+                    user['id'],
+                    payload.get('name'),
+                    payload.get('rootNote'),
+                    payload.get('intervals'),
+                    all_root_notes,
                 )
             except (AttributeError, ValueError) as exc:
                 return self.fail(str(exc))
-            return self.send_json({'scale': scale}, 201)
+            if all_root_notes:
+                return self.send_json({'scales': scales}, 201)
+            return self.send_json({'scale': scales[0]}, 201)
 
         if parsed.path == '/api/analyze':
             if length <= 0:

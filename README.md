@@ -66,6 +66,7 @@ Standard tuning keeps the original behaviour: a score's own string and fret numb
 In the **Scale Lighting** panel, enable **Show Scale with Tab Song** to keep the selected scale lit while a Guitar Pro score plays. Current tab notes take visual and LED priority when they overlap scale notes. Choose separate colors for the scale root and its other notes. This option is off by default and disables tab chord analysis while enabled.
 
 The **Scale Preset** dropdown includes 22 built-in scale patterns in all 12 sharp-named keys. Pentatonic scales contain five notes; other presets range from six to eight notes.
+When saving a custom scale, **Add this scale for all root notes** is checked by default and saves the same interval pattern under each of the 12 roots in your account. Clear it to save only the selected root.
 
 The **Tab Scale Analysis** controls in the Scale Lighting panel work with **Analyse Tab Chords**. **None** is the default and displays no recommended scale; tab notes remain visible. Choose a mood or genre to rank scale suggestions without changing chord detection or display. Recommendations include a range of scale families, showing the best-fitting key for each family. Set the **Minimum chord-note match (%)** to filter out scales below your threshold.
 
@@ -209,7 +210,7 @@ The chord chart has three **Audio source** options; the score cursor and fretboa
 
 ## Lyrics
 
-### Automatic AI transcription (🤖 AI lyric detection)
+### AI lyric detection
 
 Run speech recognition locally on your own audio: **Demucs first separates the vocals → Whisper transcribes them → lyrics are placed in bars by timestamp**.
 Separating vocals first is key; running recognition directly on the full mix produces much worse results. Choose small / medium / large-v3 models (larger is more accurate but slower).

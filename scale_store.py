@@ -164,25 +164,50 @@ def list_scales(user_id=None):
 
 
 def save_scale(user_id, name, root_note, intervals):
+    return save_scales(user_id, name, root_note, intervals)[0]
+
+
+def save_scales(user_id, name, root_note, intervals, all_root_notes=False):
     name, root_note, intervals = validate_scale(name, root_note, intervals)
+    if not isinstance(all_root_notes, bool):
+        raise ValueError('Add this scale for all root notes must be a boolean.')
+
+    if all_root_notes:
+        root_prefix = f'{root_note} '
+        family_name = name[len(root_prefix):] if name.casefold().startswith(root_prefix.casefold()) else name
+        scales = [
+            validate_scale(f'{root} {family_name}', root, intervals)
+            for root in ROOT_NOTES
+        ]
+    else:
+        scales = [(name, root_note, intervals)]
+
     now = int(time.time())
     with connect() as db:
-        existing = db.execute(
-            'SELECT id FROM scales WHERE owner_id = ? AND name = ? COLLATE NOCASE',
-            (user_id, name),
-        ).fetchone()
-        if existing:
-            db.execute(
-                'UPDATE scales SET name = ?, root_note = ?, intervals = ? WHERE id = ?',
-                (name, root_note, intervals, existing['id']),
-            )
-        else:
-            db.execute(
-                'INSERT INTO scales (owner_id, name, root_note, intervals, is_default, created_at) '
-                'VALUES (?, ?, ?, ?, 0, ?)',
-                (user_id, name, root_note, intervals, now),
-            )
-    return {'name': name, 'Root Note': root_note, 'Intervals': intervals, 'isDefault': False}
+        saved = []
+        for scale_name, scale_root, scale_intervals in scales:
+            existing = db.execute(
+                'SELECT id FROM scales WHERE owner_id = ? AND name = ? COLLATE NOCASE',
+                (user_id, scale_name),
+            ).fetchone()
+            if existing:
+                db.execute(
+                    'UPDATE scales SET name = ?, root_note = ?, intervals = ? WHERE id = ?',
+                    (scale_name, scale_root, scale_intervals, existing['id']),
+                )
+            else:
+                db.execute(
+                    'INSERT INTO scales (owner_id, name, root_note, intervals, is_default, created_at) '
+                    'VALUES (?, ?, ?, ?, 0, ?)',
+                    (user_id, scale_name, scale_root, scale_intervals, now),
+                )
+            saved.append({
+                'name': scale_name,
+                'Root Note': scale_root,
+                'Intervals': scale_intervals,
+                'isDefault': False,
+            })
+    return saved
 
 
 def validate_tuning(name, notes):
