@@ -155,6 +155,71 @@
               <input id="toggle-scale-with-tab" type="checkbox" />
               <span>Show Scale with Tab Song</span>
             </label>
+            <h4>Tab Scale Analysis</h4>
+            <label class="row">
+              <span>Mood / Genre</span>
+              <select id="tab-scale-style">
+                <option value="">Choose a mood or genre…</option>
+                <optgroup label="Moods">
+                  <option value="mood:happy">Happy / Bright / Optimistic</option>
+                  <option value="mood:sad">Sad / Serious / Introspective</option>
+                  <option value="mood:cool">Cool / Soulful / Melancholic</option>
+                  <option value="mood:dreamy">Dreamy / Ethereal / Floating</option>
+                  <option value="mood:dark">Dark / Exotic / Tense</option>
+                  <option value="mood:groovy">Groovy / Festive / Bluesy</option>
+                  <option value="mood:chaotic">Chaotic / Unsettling / Dark</option>
+                  <option value="mood:poignant">Poignant / Hovering / Partially Resolved</option>
+                </optgroup>
+                <optgroup label="Genres">
+                  <option value="genre:ambient">Ambient</option>
+                  <option value="genre:avant-garde">Avant-Garde</option>
+                  <option value="genre:ballads">Ballads</option>
+                  <option value="genre:bebop">Bebop</option>
+                  <option value="genre:blues">Blues</option>
+                  <option value="genre:classical">Classical</option>
+                  <option value="genre:dance">Dance</option>
+                  <option value="genre:extreme-metal">Extreme Metal</option>
+                  <option value="genre:flamenco">Flamenco</option>
+                  <option value="genre:folk">Folk</option>
+                  <option value="genre:funk">Funk</option>
+                  <option value="genre:grind">Grind</option>
+                  <option value="genre:grunge">Grunge</option>
+                  <option value="genre:hip-hop">Hip-Hop</option>
+                  <option value="genre:hymns">Hymns</option>
+                  <option value="genre:indie">Indie</option>
+                  <option value="genre:jazz">Jazz</option>
+                  <option value="genre:metal">Metal</option>
+                  <option value="genre:pop">Pop</option>
+                  <option value="genre:progressive-rock">Progressive Rock</option>
+                  <option value="genre:r-and-b">R&amp;B</option>
+                  <option value="genre:rock">Rock</option>
+                  <option value="genre:techno">Techno</option>
+                  <option value="genre:trance">Trance</option>
+                </optgroup>
+              </select>
+            </label>
+            <label class="row">
+              <span>Chord references</span>
+              <input id="tab-scale-chord-count" type="number" min="2" step="1" value="4" />
+            </label>
+            <label class="row">
+              <span>Scale changes</span>
+              <select id="tab-scale-behavior">
+                <option value="transient">As chord groups progress</option>
+                <option value="static">Stay with initial group</option>
+              </select>
+            </label>
+            <label class="row">
+              <input id="tab-scale-entire-song" type="checkbox" />
+              <span>Analyze entire song for one scale</span>
+            </label>
+            <label class="row">
+              <span>Recommended scale</span>
+              <select id="tab-scale-recommendations" disabled>
+                <option value="">Run Analyse Tab Chords first</option>
+              </select>
+            </label>
+            <p id="tab-scale-result" class="muted small">Choose a mood or genre, then run Analyse Tab Chords to find compatible scales.</p>
 
             <hr class="panel-sep" />
             <h3>Guitar Tuning</h3>

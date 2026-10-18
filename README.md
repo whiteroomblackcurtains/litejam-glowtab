@@ -67,6 +67,8 @@ In the **Scale Lighting** panel, enable **Show Scale with Tab Song** to keep the
 
 The **Scale Preset** dropdown includes 22 built-in scale patterns in all 12 sharp-named keys. Pentatonic scales contain five notes; other presets range from six to eight notes.
 
+The **Tab Scale Analysis** controls in the Scale Lighting panel work with **Analyse Tab Chords**. Choose a mood or genre to rank scale recommendations against the tablature's detected chords, then select a recommendation to light it alongside the playing tab. Set how many chord sections to reference (at least two) and whether the recommendation changes as chord groups progress or stays based on the opening group. **Analyze entire song for one scale** instead searches all detected chord sections for a single recommendation. Tab notes temporarily take priority over scale notes on both the fretboard and connected LEDs.
+
 ## Usage
 
 1. Click **Open Score** or drag a Guitar Pro (`.gp` / `.gp3` / `.gp4` / `.gp5` / `.gpx`), MusicXML, or Capella file into the window. MIDI files cannot be imported.

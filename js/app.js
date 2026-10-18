@@ -2,7 +2,7 @@ import { LiteJam, hexToRgb, scaleColor, packNotes, MAX_FRET } from './litejam-bl
 import { FretboardView } from './fretboard.js';
 import { ChordChart } from './chordchart.js';
 import { ChordPicker } from './chordpicker.js';
-import { chordColorClass, setTuning as setChordTuning } from './chords.js';
+import { QUALITY_DEGREES, chordColorClass, setTuning as setChordTuning } from './chords.js';
 import {
   STANDARD_TUNING,
   TUNING_MAX_MIDI,
@@ -17,6 +17,7 @@ import { melodySummary, melodyToTex } from './solotab.js';
 import { jianpuHtml, scoreToJianpu } from './jianpu.js';
 import { VideoPlayer } from './videosync.js';
 import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionVoicings, segmentAt, tabChordIntervals } from './tabchords.js';
+import { recommendScales } from './tabscales.js';
 import { StemMixer } from './mixer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -79,6 +80,12 @@ const el = {
   tabChordFullExtension: $('tab-chord-full-extension'),
   tabChordName: $('tab-chord-name'),
   tabChordDetail: $('tab-chord-detail'),
+  tabScaleStyle: $('tab-scale-style'),
+  tabScaleChordCount: $('tab-scale-chord-count'),
+  tabScaleBehavior: $('tab-scale-behavior'),
+  tabScaleEntireSong: $('tab-scale-entire-song'),
+  tabScaleRecommendations: $('tab-scale-recommendations'),
+  tabScaleResult: $('tab-scale-result'),
   brightness: $('brightness'),
   brightnessOut: $('brightness-out'),
   toggleReverse: $('toggle-reverse'),
@@ -529,6 +536,9 @@ async function animateBends(bends, baseGroups, run) {
 
 let tabChords = null; // { segments, current, variants }
 let lastBeat = null;
+let tabScaleAnalysis = null;
+let activeTabScale = null;
+const SCALE_ROOT_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 /** Overlay light groups: one color per shape, with shared notes combined into a pink group */
 function overlayLedGroups() {
@@ -552,6 +562,113 @@ function overlayLedGroups() {
   return groups;
 }
 
+function scaleReferenceGroup(segment) {
+  const segments = tabChords?.segments ?? [];
+  const count = tabScaleAnalysis?.entireSong
+    ? segments.length
+    : tabScaleAnalysis?.chordCount ?? 2;
+  if (tabScaleAnalysis?.entireSong || tabScaleAnalysis?.behavior === 'static') {
+    return { key: tabScaleAnalysis.entireSong ? 'entire-song' : 'initial', segments: segments.slice(0, count) };
+  }
+  const index = Math.max(0, segments.indexOf(segment));
+  const start = Math.max(0, Math.min(index - Math.floor((count - 1) / 2), segments.length - count));
+  const end = Math.min(segments.length, start + count);
+  return { key: `${start}:${end}`, segments: segments.slice(start, end) };
+}
+
+function setActiveTabScale(scale) {
+  if (!scale) {
+    activeTabScale = null;
+    return;
+  }
+  const root = SCALE_ROOT_NAMES.indexOf(scale['Root Note']);
+  activeTabScale = root < 0
+    ? null
+    : { name: scale.name, root, intervals: scale.Intervals.split(',').map(Number) };
+}
+
+function updateTabScaleRecommendation(segment) {
+  if (!tabScaleAnalysis || !tabChords) return;
+  if (tabChords.segments.length < 2) {
+    activeTabScale = null;
+    el.tabScaleRecommendations.replaceChildren(new Option('Not enough chords', ''));
+    el.tabScaleRecommendations.disabled = true;
+    el.tabScaleResult.textContent = 'At least two chord sections are needed to recommend a scale.';
+    return;
+  }
+
+  const reference = scaleReferenceGroup(segment ?? tabChords.segments[0]);
+  if (reference.key === tabScaleAnalysis.lastWindowKey) return;
+  tabScaleAnalysis.lastWindowKey = reference.key;
+  const candidates = recommendScales(
+    reference.segments,
+    Object.values(scalePresets),
+    tabScaleAnalysis.style,
+    5
+  );
+  const previousName = tabScaleAnalysis.selected?.name;
+  tabScaleAnalysis.candidates = candidates;
+  tabScaleAnalysis.selected = candidates.find((candidate) => candidate.name === previousName) ?? candidates[0] ?? null;
+  el.tabScaleRecommendations.replaceChildren();
+
+  if (!candidates.length) {
+    activeTabScale = null;
+    el.tabScaleRecommendations.add(new Option('No suitable scale found', ''));
+    el.tabScaleRecommendations.disabled = true;
+    el.tabScaleResult.textContent = 'No built-in scale matched the analyzed chord group.';
+    return;
+  }
+
+  for (const candidate of candidates) {
+    el.tabScaleRecommendations.add(
+      new Option(`${candidate.name} (${Math.round(candidate.fit)}% chord fit)`, candidate.name)
+    );
+  }
+  el.tabScaleRecommendations.value = tabScaleAnalysis.selected.name;
+  el.tabScaleRecommendations.disabled = false;
+  el.tabScaleResult.textContent = tabScaleAnalysis.entireSong
+    ? `Best match across the whole song: ${tabScaleAnalysis.selected.name}.`
+    : tabScaleAnalysis.behavior === 'static'
+      ? `Using the initial ${reference.segments.length}-chord group: ${tabScaleAnalysis.selected.name}.`
+      : `Using ${reference.segments.length} nearby chords: ${tabScaleAnalysis.selected.name}.`;
+  setActiveTabScale(tabScaleAnalysis.selected);
+}
+
+function configureTabScaleAnalysis() {
+  if (!tabChords || !el.tabScaleStyle.value) {
+    tabScaleAnalysis = null;
+    activeTabScale = null;
+    el.tabScaleRecommendations.replaceChildren(new Option('Choose a mood or genre', ''));
+    el.tabScaleRecommendations.disabled = true;
+    el.tabScaleResult.textContent = 'Choose a mood or genre, then run Analyse Tab Chords to find compatible scales.';
+    return;
+  }
+
+  tabScaleAnalysis = {
+    style: el.tabScaleStyle.value,
+    chordCount: Math.max(
+      2,
+      Math.min(
+        tabChords.segments.length,
+        Math.floor(Number(el.tabScaleChordCount.value)) || 2
+      )
+    ),
+    behavior: el.tabScaleBehavior.value,
+    entireSong: el.tabScaleEntireSong.checked,
+    lastWindowKey: null,
+    candidates: [],
+    selected: null,
+  };
+  updateTabScaleRecommendation(tabChords.current ?? tabChords.segments[0]);
+}
+
+function refreshScaleWithTabDisplay() {
+  if ((!settings.showScaleWithTab && !activeTabScale && !tabChords) || !scorePlaying || !lastBeat) return;
+  const groups = [...scaleWithTabGroups(), ...currentGroups(lastBeat)];
+  fretboard.setGroups(groups);
+  if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+}
+
 /** Resend the current score lights and overlay to the guitar when paused or just after analysis starts */
 function resendLeds() {
   if (guitar.status !== 'connected') return;
@@ -561,9 +678,14 @@ function resendLeds() {
 
 function showTabChord(seg) {
   if (!tabChords) return;
-  if ((seg?.name ?? null) === (tabChords.current?.name ?? null) && !tabChords.dirty) return;
+  if (
+    seg?.start === tabChords.current?.start &&
+    (seg?.name ?? null) === (tabChords.current?.name ?? null) &&
+    !tabChords.dirty
+  ) return;
   tabChords.current = seg;
   tabChords.dirty = false;
+  if (seg) updateTabScaleRecommendation(seg);
   if (!seg) {
     tabChords.variants = [];
     fretboard.setOverlay([]);
@@ -610,19 +732,25 @@ function analyzeTabChords() {
     return;
   }
   tabChords = { segments, current: null, dirty: true };
+  configureTabScaleAnalysis();
   el.tabChordBtn.textContent = 'Re-analyse Tab Chords';
   toast(`Found ${new Set(segments.map((s) => s.name)).size} chords in ${segments.length} sections`);
   showTabChord(segments[0]);
 }
 
 function resetTabChords(redraw = true) {
-  const had = tabChords?.variants?.length;
+  const hadDisplay = Boolean(tabChords?.variants?.length || activeTabScale || settings.showScaleWithTab);
   tabChords = null;
   fretboard.setOverlay([]);
   el.tabChordName.textContent = '';
   el.tabChordDetail.textContent = '';
   el.tabChordBtn.textContent = 'Analyse Tab Chords';
-  if (had && redraw) resendLeds();
+  tabScaleAnalysis = null;
+  activeTabScale = null;
+  el.tabScaleRecommendations.replaceChildren(new Option('Run Analyse Tab Chords first', ''));
+  el.tabScaleRecommendations.disabled = true;
+  el.tabScaleResult.textContent = 'Choose a mood or genre, then run Analyse Tab Chords to find compatible scales.';
+  if (hadDisplay && redraw) resendLeds();
 }
 
 on(el.tabChordBtn, 'click', analyzeTabChords);
@@ -636,6 +764,44 @@ for (const sel of [el.tabChordCount, el.tabChordNotes, el.tabChordType, el.tabCh
     }
   });
 }
+
+function updateTabScaleAnalysisControls() {
+  const entireSong = el.tabScaleEntireSong.checked;
+  el.tabScaleChordCount.disabled = entireSong;
+  el.tabScaleBehavior.disabled = entireSong;
+}
+
+function recomputeTabScaleAnalysis() {
+  updateTabScaleAnalysisControls();
+  if (!tabChords) return;
+  configureTabScaleAnalysis();
+  refreshScaleWithTabDisplay();
+}
+
+for (const control of [
+  el.tabScaleStyle,
+  el.tabScaleChordCount,
+  el.tabScaleBehavior,
+  el.tabScaleEntireSong,
+]) {
+  on(control, 'change', recomputeTabScaleAnalysis);
+}
+updateTabScaleAnalysisControls();
+
+on(el.tabScaleRecommendations, 'change', () => {
+  const selected = tabScaleAnalysis?.candidates.find(
+    (candidate) => candidate.name === el.tabScaleRecommendations.value
+  );
+  if (!selected || !tabScaleAnalysis) return;
+  tabScaleAnalysis.selected = selected;
+  setActiveTabScale(selected);
+  el.tabScaleResult.textContent = tabScaleAnalysis.entireSong
+    ? `Selected for the whole song: ${selected.name}.`
+    : tabScaleAnalysis.behavior === 'static'
+      ? `Selected for the initial chord group: ${selected.name}.`
+      : `Selected scale for the current chord group: ${selected.name}.`;
+  refreshScaleWithTabDisplay();
+});
 
 function onBeat(beat) {
   lastBeat = beat;
@@ -689,8 +855,7 @@ function readScaleDefinition() {
 }
 
 function scaleWithTabGroups() {
-  if (!settings.showScaleWithTab) return [];
-  const definition = readScaleDefinition();
+  const definition = activeTabScale ?? (settings.showScaleWithTab ? readScaleDefinition() : null);
   if (!definition) return [];
 
   const scale = new Set([
@@ -713,13 +878,6 @@ function scaleWithTabGroups() {
     { leds: packNotes(rootNotes), color: scaleColor(hexToRgb(settings.colorScaleRoot), brightness) },
     { leds: packNotes(otherNotes), color: scaleColor(hexToRgb(settings.colorScaleNote), brightness) },
   ];
-}
-
-function refreshScaleWithTabDisplay() {
-  if (!settings.showScaleWithTab || !scorePlaying || !lastBeat) return;
-  const groups = [...scaleWithTabGroups(), ...currentGroups(lastBeat)];
-  fretboard.setGroups(groups);
-  if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
 }
 
 function setScaleWithTab(enabled) {
@@ -761,6 +919,10 @@ async function loadScalePresets() {
     scalePresets = Object.fromEntries(data.scales.map((scale) => [scale.name, scale]));
     const selected = el.scalePreset.value;
     populateScalePresetOptions(selected);
+    if (tabChords && tabScaleAnalysis) {
+      configureTabScaleAnalysis();
+      refreshScaleWithTabDisplay();
+    }
 
     if (auth.authenticated) {
       el.scaleAccountStatus.textContent = `Signed in as ${auth.user.email}`;
