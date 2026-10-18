@@ -209,7 +209,7 @@ The chord chart has three **Audio source** options; the score cursor and fretboa
 
 ## Lyrics
 
-### Automatic AI transcription (🤖 AI lyric detection)
+### AI lyric detection
 
 Run speech recognition locally on your own audio: **Demucs first separates the vocals → Whisper transcribes them → lyrics are placed in bars by timestamp**.
 Separating vocals first is key; running recognition directly on the full mix produces much worse results. Choose small / medium / large-v3 models (larger is more accurate but slower).
