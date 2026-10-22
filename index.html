@@ -53,6 +53,17 @@
               <button id="btn-add-tab-stems" class="btn btn-sm" type="button">Load Audio Stems</button>
               <input id="tab-stems-input" type="file" accept="audio/*,.mp3,.m4a,.wav,.aac,.flac,.ogg,.opus,.aif,.aiff,.caf" multiple hidden />
               <p id="tab-stems-summary" class="muted small">Load up to 6 aligned audio stems to play with this tablature.</p>
+              <div id="tab-stem-calibration" class="tab-stem-calibration" hidden>
+                <label class="tab-stem-calibration-row">
+                  <span>Tab start delay (seconds)</span>
+                  <input id="tab-stem-delay" type="number" min="0" max="10" step="0.05" value="0" />
+                </label>
+                <label class="tab-stem-calibration-row">
+                  <span>Tab rate adjustment (%)</span>
+                  <input id="tab-stem-rate" type="number" min="-5" max="5" step="0.1" value="0" />
+                </label>
+                <p class="muted small">For these files, try a 2.3 s delay and +1.8% rate. Settings are saved for this score and stem set.</p>
+              </div>
               <div id="tab-stems-list" class="tab-stems-list"></div>
             </div>
           </section>

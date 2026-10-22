@@ -20,6 +20,12 @@ import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionV
 import { recommendScales } from './tabscales.js';
 import { StemMixer } from './mixer.js';
 import { waveformPeaks } from './waveform.js';
+import {
+  audioTimeForScore,
+  isScorePositionSeek,
+  normalizeTabStemCalibration,
+  scoreTimeForAudio,
+} from './tab-stem-calibration.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -87,6 +93,9 @@ const el = {
   stemsTab: $('tab-view-stems'),
   tracksPanel: $('tracks-panel'),
   stemsPanel: $('stems-panel'),
+  tabStemCalibrationPanel: $('tab-stem-calibration'),
+  tabStemDelay: $('tab-stem-delay'),
+  tabStemRate: $('tab-stem-rate'),
   addTabStems: $('btn-add-tab-stems'),
   tabStemsInput: $('tab-stems-input'),
   tabStemsSummary: $('tab-stems-summary'),
@@ -235,6 +244,13 @@ let mixer = null;
 let stemsMedia = null; // Which song's stems are currently loaded in the mixer; re-separate when the song changes
 let tabStemMixer = null;
 let tabStemFiles = [];
+let tabStemCalibration = normalizeTabStemCalibration();
+let tabStemCalibrationKey = null;
+let tabStemScoreSample = null;
+let tabStemStartTimer = null;
+let tabStemPlayheadTimer = null;
+let tabStemStartPending = false;
+let preserveStemOnScorePause = false;
 let tabStemScrubbing = false;
 let scorePositionMs = 0;
 let activeSidebarTab = 'tracks';
@@ -279,6 +295,7 @@ function load() {
     showJianpu: false,
     tuning: [...STANDARD_TUNING],
     useCustomTuningForScoreNotes: true,
+    tabStemCalibrations: {},
   };
   try {
     const saved = JSON.parse(localStorage.getItem('litejam-glowtab') ?? '{}');
@@ -287,6 +304,9 @@ function load() {
     if (!saved.fretsDefault24 && saved.frets === 15) merged.frets = defaults.frets;
     merged.fretsDefault24 = true;
     if (!isValidTuning(merged.tuning)) merged.tuning = defaults.tuning;
+    if (!merged.tabStemCalibrations || typeof merged.tabStemCalibrations !== 'object' || Array.isArray(merged.tabStemCalibrations)) {
+      merged.tabStemCalibrations = {};
+    }
     return merged;
   } catch {
     return defaults;
@@ -394,13 +414,33 @@ function initAlphaTab() {
   api.playerStateChanged.on((e) => {
     const playing = e.state === 1; // 1 = Playing
     scorePlaying = playing;
+    if (playing) scorePositionMs = readScorePositionMs();
+    tabStemScoreSample = { positionSeconds: scorePositionMs / 1000, observedAt: performance.now() };
     el.play.textContent = playing ? '⏸' : '▶';
     if (playing) ledRun++; // Starting playback cancels any running test animation
-    handleUploadedStemPlayback(playing);
+    const preserveStems = !playing && preserveStemOnScorePause;
+    if (preserveStems) preserveStemOnScorePause = false;
+    else {
+      handleUploadedStemPlayback(playing);
+      if (!playing) clearTabStemStartTimers();
+    }
     if (!playing) clearLeds();
   });
 
   api.playerPositionChanged.on((e) => {
+    const now = performance.now();
+    const positionSeconds = e.currentTime / 1000;
+    const seekDetected = scorePlaying
+      && !tabStemStartPending
+      && tabStemMixer?.ready
+      && (e.isSeek || (tabStemScoreSample
+        && isScorePositionSeek(
+          tabStemScoreSample.positionSeconds,
+          positionSeconds,
+          (now - tabStemScoreSample.observedAt) / 1000,
+          (settings.speed / 100) * (1 + tabStemCalibration.ratePercent / 100),
+        )));
+    tabStemScoreSample = { positionSeconds, observedAt: now };
     endTime = e.endTime;
     scorePositionMs = e.currentTime;
     el.timeCur.textContent = fmtTime(e.currentTime);
@@ -408,9 +448,9 @@ function initAlphaTab() {
     if (!seeking && e.endTime > 0) {
       el.seek.value = String(Math.round((e.currentTime / e.endTime) * 1000));
     }
-    syncUploadedStemPosition(e.currentTime);
+    syncUploadedStemPosition(e.currentTime, seekDetected);
     if (renderTabStemRuler()) requestAnimationFrame(drawTabStemWaveforms);
-    updateTabStemPlayhead(e.currentTime / 1000);
+    updateTabStemPlayhead(tabStemMixer?.ready ? tabStemMixer.currentTime : e.currentTime / 1000);
   });
 
   api.playedBeatChanged.on((beat) => onBeat(beat));
@@ -519,7 +559,7 @@ function renderTabStemLanes() {
   }
 
   renderTabStemRuler();
-  updateTabStemPlayhead(scorePositionMs / 1000);
+  updateTabStemPlayhead(tabStemMixer?.ready ? tabStemMixer.currentTime : stemTimeForScore(scorePositionMs));
   drawTabStemWaveforms();
 }
 
@@ -569,10 +609,126 @@ function drawTabStemWaveforms() {
   }
 }
 
+function tabStemPairKey() {
+  if (!api?.score || !tabStemMixer?.tracks.length) return null;
+  const stems = tabStemMixer.tracks
+    .map((track) => `${track.label}|${track.file?.size ?? ''}|${track.file?.lastModified ?? ''}`)
+    .sort();
+  return JSON.stringify([
+    api.score.title ?? '',
+    api.score.artist ?? '',
+    api.score.album ?? '',
+    api.score.masterBars?.length ?? 0,
+    stems,
+  ]);
+}
+
+function renderTabStemCalibration() {
+  if (el.tabStemCalibrationPanel) el.tabStemCalibrationPanel.hidden = !tabStemMixer?.tracks.length;
+  if (el.tabStemDelay) el.tabStemDelay.value = tabStemCalibration.delaySeconds.toFixed(2);
+  if (el.tabStemRate) el.tabStemRate.value = tabStemCalibration.ratePercent.toFixed(1);
+}
+
+function selectTabStemCalibration(previousCalibration = tabStemCalibration) {
+  const key = tabStemPairKey();
+  tabStemCalibrationKey = key;
+  if (!key) {
+    tabStemCalibration = normalizeTabStemCalibration();
+  } else if (settings.tabStemCalibrations[key]) {
+    tabStemCalibration = normalizeTabStemCalibration(settings.tabStemCalibrations[key]);
+  } else {
+    tabStemCalibration = normalizeTabStemCalibration(previousCalibration);
+  }
+  rememberTabStemScorePosition(scorePositionMs);
+  renderTabStemCalibration();
+  applyTabPlaybackSpeed();
+}
+
+function saveTabStemCalibration() {
+  if (!tabStemCalibrationKey) return;
+  settings.tabStemCalibrations[tabStemCalibrationKey] = tabStemCalibration;
+  save();
+}
+
+function stemTimeForScore(positionMs) {
+  return audioTimeForScore(positionMs / 1000, tabStemCalibration);
+}
+
+function scoreTimeForStem(positionSeconds) {
+  return scoreTimeForAudio(positionSeconds, tabStemCalibration);
+}
+
+function readScorePositionMs() {
+  const position = Number(api?.timePosition);
+  return Number.isFinite(position) && position >= 0 ? position : scorePositionMs;
+}
+
+function rememberTabStemScorePosition(positionMs) {
+  tabStemScoreSample = {
+    positionSeconds: positionMs / 1000,
+    observedAt: performance.now(),
+  };
+}
+
+function clearTabStemStartTimers() {
+  if (tabStemStartTimer !== null) clearTimeout(tabStemStartTimer);
+  if (tabStemPlayheadTimer !== null) clearInterval(tabStemPlayheadTimer);
+  tabStemStartTimer = null;
+  tabStemPlayheadTimer = null;
+  tabStemStartPending = false;
+}
+
+function scheduleTabScoreStart() {
+  if (tabStemStartTimer !== null) clearTimeout(tabStemStartTimer);
+  if (tabStemPlayheadTimer !== null) clearInterval(tabStemPlayheadTimer);
+  tabStemStartPending = true;
+  el.play.textContent = '⏸';
+  const remainingSeconds = Math.max(0, tabStemCalibration.delaySeconds - tabStemMixer.currentTime);
+  const rate = Math.max(0.25, settings.speed / 100);
+  tabStemStartTimer = setTimeout(() => {
+    tabStemStartTimer = null;
+    if (tabStemPlayheadTimer !== null) clearInterval(tabStemPlayheadTimer);
+    tabStemPlayheadTimer = null;
+    const currentTime = tabStemMixer?.currentTime ?? 0;
+    if (currentTime + 0.02 < tabStemCalibration.delaySeconds) {
+      if (currentTime >= (tabStemMixer?.duration ?? 0) - 0.05) {
+        tabStemStartPending = false;
+        el.play.textContent = '▶';
+        toast('The tab start delay exceeds the audio duration.', true);
+        return;
+      }
+      scheduleTabScoreStart();
+      return;
+    }
+    if (!tabStemMixer?.ready) {
+      tabStemStartPending = false;
+      el.play.textContent = '▶';
+      return;
+    }
+    tabStemStartPending = false;
+    if (!scorePlaying) api.playPause();
+  }, (remainingSeconds / rate) * 1000);
+  tabStemPlayheadTimer = setInterval(() => updateTabStemPlayhead(tabStemMixer?.currentTime ?? 0), 30);
+}
+
 function syncUploadedStemPosition(positionMs, force = false) {
   if (!tabStemMixer?.ready || mode !== 'tab') return;
-  const target = Math.max(0, Math.min(positionMs / 1000, tabStemMixer.duration));
+  const target = Math.max(0, Math.min(stemTimeForScore(positionMs), tabStemMixer.duration));
   if (force || tabStemMixer.paused) tabStemMixer.currentTime = target;
+}
+
+function applyTabPlaybackSpeed() {
+  if (!api) return;
+  const correction = mode === 'tab' && tabStemMixer?.ready ? 1 + tabStemCalibration.ratePercent / 100 : 1;
+  const playbackSpeed = (settings.speed / 100) * correction;
+  if (Math.abs(api.playbackSpeed - playbackSpeed) < 0.000001) return;
+  const positionMs = readScorePositionMs();
+  api.playbackSpeed = playbackSpeed;
+  if (Number.isFinite(positionMs)) {
+    api.timePosition = positionMs;
+    scorePositionMs = positionMs;
+    rememberTabStemScorePosition(positionMs);
+  }
 }
 
 function handleUploadedStemPlayback(playing) {
@@ -581,9 +737,39 @@ function handleUploadedStemPlayback(playing) {
     tabStemMixer.pause();
     return;
   }
+  applyTabPlaybackSpeed();
+  if (tabStemMixer.paused) {
+    syncUploadedStemPosition(scorePositionMs, true);
+    tabStemMixer.play().catch((error) => toast(`Stem playback failed: ${error.message}`, true));
+  }
+}
+
+async function startTabPlaybackWithStems() {
+  if (!tabStemMixer?.ready) {
+    api.playPause();
+    return;
+  }
+
+  applyTabPlaybackSpeed();
+  scorePositionMs = readScorePositionMs();
   tabStemMixer.setRate(settings.speed / 100);
-  syncUploadedStemPosition(scorePositionMs, true);
-  tabStemMixer.play().catch((error) => toast(`Stem playback failed: ${error.message}`, true));
+  const waitingForTabStart = scorePositionMs <= 0 && tabStemMixer.currentTime < tabStemCalibration.delaySeconds;
+  if (!waitingForTabStart) syncUploadedStemPosition(scorePositionMs, true);
+  tabStemStartPending = waitingForTabStart;
+  el.play.textContent = '⏸';
+
+  try {
+    await tabStemMixer.play();
+    if (waitingForTabStart) {
+      scheduleTabScoreStart();
+    } else if (!scorePlaying) {
+      api.playPause();
+    }
+  } catch (error) {
+    clearTabStemStartTimers();
+    el.play.textContent = '▶';
+    toast(`Stem playback failed: ${error.message}`, true);
+  }
 }
 
 function updateScoreAudioVolume() {
@@ -591,12 +777,17 @@ function updateScoreAudioVolume() {
 }
 
 function clearUploadedTabStems() {
+  clearTabStemStartTimers();
   tabStemMixer?.destroy();
   tabStemMixer = null;
   tabStemFiles = [];
+  tabStemCalibrationKey = null;
+  tabStemCalibration = normalizeTabStemCalibration();
+  renderTabStemCalibration();
   scorePositionMs = 0;
   endTime = 0;
   tabStemRulerDuration = -1;
+  applyTabPlaybackSpeed();
   updateScoreAudioVolume();
   renderTabStemLanes();
 }
@@ -619,6 +810,7 @@ async function addUploadedTabStems(files) {
   }
 
   const mixerToLoad = tabStemMixer ?? new StemMixer();
+  const hadMixer = Boolean(tabStemMixer);
   const wasPlaying = scorePlaying;
   busy('Loading audio stems…');
   try {
@@ -630,7 +822,9 @@ async function addUploadedTabStems(files) {
     tabStemMixer = mixerToLoad;
     tabStemFiles.push(...files);
     tabStemMixer.setRate(settings.speed / 100);
-    syncUploadedStemPosition(scorePositionMs, true);
+    selectTabStemCalibration();
+    if (tabStemStartPending) scheduleTabScoreStart();
+    if (!hadMixer && (scorePositionMs > 0 || wasPlaying)) syncUploadedStemPosition(scorePositionMs, true);
     updateScoreAudioVolume();
     renderTabStemLanes();
     busy(null);
@@ -649,26 +843,68 @@ function removeUploadedTabStem(id) {
   if (index < 0) return;
   tabStemMixer.removeTrack(id);
   tabStemFiles.splice(index, 1);
+  const previousCalibration = tabStemCalibration;
   if (!tabStemMixer.tracks.length) {
+    clearTabStemStartTimers();
     tabStemMixer.destroy();
     tabStemMixer = null;
-    updateScoreAudioVolume();
   }
+  selectTabStemCalibration(previousCalibration);
+  if (tabStemStartPending) scheduleTabScoreStart();
+  applyTabPlaybackSpeed();
+  updateScoreAudioVolume();
   renderTabStemLanes();
 }
 
 function seekScoreFromTabStems(clientX) {
-  if (!api || endTime <= 0) return;
+  if (!api || !tabStemMixer?.ready || endTime <= 0) return;
   const waveform = el.tabStemLanes.querySelector('.tab-stem-waveform');
   if (!waveform) return;
   const rect = waveform.getBoundingClientRect();
   const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-  const targetMs = Math.min(ratio * tabStemTimelineDuration() * 1000, endTime);
+  const targetAudioTime = Math.min(ratio * tabStemTimelineDuration(), tabStemMixer.duration);
+  const targetMs = Math.min(scoreTimeForStem(targetAudioTime) * 1000, endTime);
+  const intendedToPlay = scorePlaying || tabStemStartPending;
+  if (tabStemStartPending) clearTabStemStartTimers();
+  if (scorePlaying && targetAudioTime < tabStemCalibration.delaySeconds) {
+    preserveStemOnScorePause = true;
+    api.playPause();
+  }
   scorePositionMs = targetMs;
+  rememberTabStemScorePosition(targetMs);
   api.timePosition = targetMs;
-  syncUploadedStemPosition(targetMs, true);
-  updateTabStemPlayhead(targetMs / 1000);
+  tabStemMixer.currentTime = targetAudioTime;
+  updateTabStemPlayhead(targetAudioTime);
+  if (targetAudioTime < tabStemCalibration.delaySeconds && intendedToPlay) {
+    scheduleTabScoreStart();
+  } else if (targetAudioTime >= tabStemCalibration.delaySeconds && intendedToPlay && !scorePlaying) {
+    api.playPause();
+  }
 }
+
+on(el.tabStemDelay, 'change', () => {
+  tabStemCalibration = normalizeTabStemCalibration({
+    ...tabStemCalibration,
+    delaySeconds: el.tabStemDelay.value,
+  });
+  rememberTabStemScorePosition(scorePositionMs);
+  renderTabStemCalibration();
+  saveTabStemCalibration();
+  if (tabStemStartPending) scheduleTabScoreStart();
+  if (tabStemMixer?.paused && scorePositionMs > 0) syncUploadedStemPosition(scorePositionMs, true);
+});
+
+on(el.tabStemRate, 'change', () => {
+  tabStemCalibration = normalizeTabStemCalibration({
+    ...tabStemCalibration,
+    ratePercent: el.tabStemRate.value,
+  });
+  rememberTabStemScorePosition(scorePositionMs);
+  renderTabStemCalibration();
+  saveTabStemCalibration();
+  applyTabPlaybackSpeed();
+  if (tabStemMixer?.paused && scorePositionMs > 0) syncUploadedStemPosition(scorePositionMs, true);
+});
 
 on(el.tracksTab, 'click', () => selectSidebarTab('tracks'));
 on(el.stemsTab, 'click', () => selectSidebarTab('stems'));
@@ -2718,6 +2954,18 @@ on(el.play, 'click', () => {
   if (!scoreLoaded) return toast('Open a score or select Analyze Chords to analyze an audio file.');
   if (tabStemMixer?.ready) {
     tabStemMixer.ctx.resume().catch((error) => toast(`Stem audio could not start: ${error.message}`, true));
+    if (tabStemStartPending) {
+      clearTabStemStartTimers();
+      tabStemMixer.pause();
+      el.play.textContent = '▶';
+      return;
+    }
+    if (scorePlaying) {
+      api.playPause();
+      return;
+    }
+    startTabPlaybackWithStems();
+    return;
   }
   api.playPause();
 });
@@ -2731,8 +2979,10 @@ on(el.stop, 'click', () => {
     el.seek.value = '0';
     el.timeCur.textContent = '00:00';
   } else {
+    clearTabStemStartTimers();
     api?.stop();
     scorePositionMs = 0;
+    rememberTabStemScorePosition(0);
     if (tabStemMixer?.ready) tabStemMixer.currentTime = 0;
     updateTabStemPlayhead(0);
   }
@@ -2745,9 +2995,23 @@ on(el.rewind, 'click', () => {
     clock().currentTime = 0;
     el.seek.value = '0';
   } else if (api) {
+    const intendedToPlay = scorePlaying || tabStemStartPending;
+    clearTabStemStartTimers();
+    if (tabStemMixer?.ready && scorePlaying && tabStemCalibration.delaySeconds > 0) {
+      preserveStemOnScorePause = true;
+      api.playPause();
+    }
     api.tickPosition = 0;
     scorePositionMs = 0;
-    if (tabStemMixer?.ready) tabStemMixer.currentTime = 0;
+    rememberTabStemScorePosition(0);
+    if (tabStemMixer?.ready) {
+      tabStemMixer.currentTime = 0;
+      if (intendedToPlay && tabStemCalibration.delaySeconds > 0) {
+        tabStemMixer.play()
+          .then(scheduleTabScoreStart)
+          .catch((error) => toast(`Stem playback failed: ${error.message}`, true));
+      }
+    }
     updateTabStemPlayhead(0);
   }
   clearLeds();
@@ -2773,20 +3037,23 @@ on(el.seek, 'change', () => {
   } else if (api && endTime > 0) {
     const targetMs = ratio * endTime;
     scorePositionMs = targetMs;
+    rememberTabStemScorePosition(targetMs);
     api.timePosition = targetMs;
     syncUploadedStemPosition(targetMs, true);
-    updateTabStemPlayhead(targetMs / 1000);
+    updateTabStemPlayhead(stemTimeForScore(targetMs));
   }
 });
 
 on(el.speed, 'input', () => {
   settings.speed = Number(el.speed.value);
+  rememberTabStemScorePosition(scorePositionMs);
   el.speedOut.textContent = `${settings.speed}%`;
-  if (api) api.playbackSpeed = settings.speed / 100;
+  applyTabPlaybackSpeed();
   audio.playbackRate = settings.speed / 100;
   if (videoPlayer?.available) videoPlayer.setRate(settings.speed / 100);
   if (mixer?.ready) mixer.setRate(settings.speed / 100);
   if (tabStemMixer?.ready) tabStemMixer.setRate(settings.speed / 100);
+  if (tabStemStartPending) scheduleTabScoreStart();
   save();
 });
 

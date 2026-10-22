@@ -73,7 +73,7 @@ The **Tab Scale Analysis** controls in the Scale Lighting panel work with **Anal
 
 Set how many chord sections to reference (at least two) and whether the recommendation changes as chord groups progress or stays based on the opening group. **Analyze entire song for one scale** instead searches all detected chord sections for a single recommendation. **Also show chord inversions** is off by default; enable it to display the analyzed chord voicings alongside tab notes and any selected scale. Selected scales light alongside the playing tab, and tab notes temporarily take priority on both the fretboard and connected LEDs.
 
-After loading a tablature score, choose **Stems** beside **Tracks** in the sidebar and load up to six aligned audio files. The main view shows each stem's waveform across the song; click or drag on a waveform to seek. Playback uses the stems instead of the score's built-in sound, while the score cursor, tablature notes, and fretboard LEDs stay synchronized to the shared transport. Use the **Tracks** tab to return to the score view.
+After loading a tablature score, choose **Stems** beside **Tracks** in the sidebar and load up to six aligned audio files. The main view shows each stem's waveform across the song; click or drag on a waveform to seek. Playback uses the stems instead of the score's built-in sound, while the score cursor, tablature notes, and fretboard LEDs stay synchronized to the shared transport. If the tab and stems have a content-timing offset, use **Tab start delay** and **Tab rate adjustment** in the Stems panel. The calibration is saved in this browser for the current score and stem set; the stems retain their full lead-in. Use the **Tracks** tab to return to the score view.
 
 ## Usage
 

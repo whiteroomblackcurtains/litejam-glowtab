@@ -446,6 +446,34 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+.tab-stem-calibration {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.tab-stem-calibration-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tab-stem-calibration-row input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.tab-stem-calibration p {
+  margin: 0;
+}
+
 /* ---------- Score area ---------- */
 
 .stage {
