@@ -561,11 +561,20 @@ input[type="checkbox"] {
 }
 
 .tab-stem-lane-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: var(--fg);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-stem-lane-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .tab-stem-waveform {
@@ -587,6 +596,32 @@ input[type="checkbox"] {
   border: 1px solid var(--line);
   border-radius: 5px;
   cursor: pointer;
+}
+
+.tab-stem-mix-btn {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tab-stem-mix-btn.active[data-stem-control="mute"] {
+  color: #ffbe55;
+  border-color: #ffbe55;
+  background: rgba(255, 190, 85, 0.12);
+}
+
+.tab-stem-mix-btn.active[data-stem-control="solo"] {
+  color: #63df9b;
+  border-color: #63df9b;
+  background: rgba(99, 223, 155, 0.12);
 }
 
 .tab-stem-empty {

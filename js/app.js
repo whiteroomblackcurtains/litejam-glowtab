@@ -510,14 +510,51 @@ function selectSidebarTab(tab) {
 }
 
 function updateTabStemPlayhead(timeSeconds) {
-  const duration = Math.max(endTime / 1000, tabStemMixer?.duration ?? 0);
+  const duration = tabStemTimelineDuration();
   const progress = duration > 0 ? Math.max(0, Math.min(1, timeSeconds / duration)) : 0;
-  const waveformWidth = Math.max(0, el.tabStemLanes.clientWidth - 200);
-  el.tabStemPlayhead.style.left = `${158 + waveformWidth * progress}px`;
+  const waveform = el.tabStemLanes.querySelector('.tab-stem-waveform');
+  if (!waveform) return;
+  const lanesRect = el.tabStemLanes.getBoundingClientRect();
+  const waveformRect = waveform.getBoundingClientRect();
+  if (!waveformRect.width) return;
+  el.tabStemPlayhead.style.left = `${waveformRect.left - lanesRect.left + waveformRect.width * progress}px`;
 }
 
 function tabStemTimelineDuration() {
-  return Math.max(endTime / 1000, tabStemMixer?.duration ?? 0);
+  return tabStemMixer?.ready ? tabStemMixer.duration : endTime / 1000;
+}
+
+function updateTabStemMixButtons() {
+  if (!tabStemMixer) return;
+  for (const button of el.tabStemLanes.querySelectorAll('.tab-stem-mix-btn')) {
+    const track = tabStemMixer.tracks.find((item) => item.id === button.dataset.stemId);
+    if (!track) continue;
+    const active = button.dataset.stemControl === 'mute' ? track.muted : tabStemMixer.soloId === track.id;
+    const action = button.dataset.stemControl === 'mute'
+      ? active ? 'Unmute' : 'Mute'
+      : active ? 'Clear solo on' : 'Solo';
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    button.title = `${action} ${track.label}`;
+    button.setAttribute('aria-label', `${action} ${track.label}`);
+  }
+}
+
+function createTabStemMixButton(track, control) {
+  const button = document.createElement('button');
+  button.className = 'tab-stem-mix-btn';
+  button.type = 'button';
+  button.textContent = control === 'mute' ? 'M' : 'S';
+  button.dataset.stemId = track.id;
+  button.dataset.stemControl = control;
+  button.setAttribute('aria-pressed', 'false');
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (control === 'mute') tabStemMixer.setMuted(track.id, !track.muted);
+    else tabStemMixer.setSolo(track.id);
+    updateTabStemMixButtons();
+  });
+  return button;
 }
 
 function renderTabStemLanes() {
@@ -538,10 +575,13 @@ function renderTabStemLanes() {
 
       const lane = document.createElement('div');
       lane.className = 'tab-stem-lane';
+      const labelControls = document.createElement('div');
+      labelControls.className = 'tab-stem-lane-label';
       const name = document.createElement('div');
       name.className = 'tab-stem-lane-name';
       name.title = track.label;
       name.textContent = track.label;
+      labelControls.append(name, createTabStemMixButton(track, 'mute'), createTabStemMixButton(track, 'solo'));
       const waveform = document.createElement('canvas');
       waveform.className = 'tab-stem-waveform';
       waveform.dataset.stemId = track.id;
@@ -553,11 +593,12 @@ function renderTabStemLanes() {
       remove.title = `Remove ${track.label}`;
       remove.setAttribute('aria-label', `Remove ${track.label}`);
       remove.addEventListener('click', () => removeUploadedTabStem(track.id));
-      lane.append(name, waveform, remove);
+      lane.append(labelControls, waveform, remove);
       el.tabStemLanes.insertBefore(lane, el.tabStemPlayhead);
     }
   }
 
+  updateTabStemMixButtons();
   renderTabStemRuler();
   updateTabStemPlayhead(tabStemMixer?.ready ? tabStemMixer.currentTime : stemTimeForScore(scorePositionMs));
   drawTabStemWaveforms();
@@ -582,6 +623,7 @@ const TAB_STEM_COLORS = ['#55c2ff', '#ffbe55', '#bb83ff', '#63df9b', '#ff7185', 
 
 function drawTabStemWaveforms() {
   if (!tabStemMixer?.tracks.length) return;
+  const timelineDuration = tabStemTimelineDuration();
   for (const [index, track] of tabStemMixer.tracks.entries()) {
     const canvas = el.tabStemLanes.querySelector(`canvas[data-stem-id="${CSS.escape(track.id)}"]`);
     if (!canvas) continue;
@@ -599,8 +641,11 @@ function drawTabStemWaveforms() {
     context.moveTo(0, height / 2);
     context.lineTo(width, height / 2);
     context.stroke();
-    const peaks = waveformPeaks(track.buffer, Math.min(1800, Math.max(1, Math.round(width * dpr))));
-    const binWidth = width / peaks.length;
+    const audioWidth = timelineDuration > 0
+      ? width * Math.min(1, track.buffer.duration / timelineDuration)
+      : width;
+    const peaks = waveformPeaks(track.buffer, Math.min(1800, Math.max(1, Math.round(audioWidth * dpr))));
+    const binWidth = audioWidth / peaks.length;
     context.fillStyle = TAB_STEM_COLORS[index % TAB_STEM_COLORS.length];
     for (let bin = 0; bin < peaks.length; bin++) {
       const amplitude = Math.max(1, peaks[bin] * height * 0.44);
@@ -937,6 +982,7 @@ on(el.tabStemLanes, 'pointercancel', () => {
 });
 window.addEventListener('resize', () => {
   drawTabStemWaveforms();
+  updateTabStemPlayhead(tabStemMixer?.ready ? tabStemMixer.currentTime : stemTimeForScore(scorePositionMs));
 });
 
 /* ---------------- Light LEDs ---------------- */

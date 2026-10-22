@@ -72,3 +72,28 @@ test('uploaded mixer tracks stay synchronized when adding and removing lanes dur
     else globalThis.window = originalWindow;
   }
 });
+
+test('mute and solo update track gains without overriding mute state', async () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = { AudioContext: FakeAudioContext };
+  const mixer = new StemMixer();
+  try {
+    await mixer.loadFiles([audioFile('drums.wav'), audioFile('bass.wav')]);
+    const [drums, bass] = mixer.tracks;
+
+    mixer.setMuted(drums.id, true);
+    assert.equal(drums.gain.gain.value, 0);
+
+    assert.equal(mixer.setSolo(bass.id), bass.id);
+    assert.equal(drums.gain.gain.value, 0);
+    assert.equal(bass.gain.gain.value, 1);
+
+    assert.equal(mixer.setSolo(bass.id), null);
+    assert.equal(drums.gain.gain.value, 0);
+    assert.equal(bass.gain.gain.value, 1);
+  } finally {
+    mixer.destroy();
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
