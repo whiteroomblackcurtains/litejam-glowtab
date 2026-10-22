@@ -19,6 +19,7 @@ import { VideoPlayer } from './videosync.js';
 import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionVoicings, segmentAt, tabChordIntervals } from './tabchords.js';
 import { recommendScales } from './tabscales.js';
 import { StemMixer } from './mixer.js';
+import { waveformPeaks } from './waveform.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -82,6 +83,20 @@ const el = {
   tabChordFullExtension: $('tab-chord-full-extension'),
   tabChordName: $('tab-chord-name'),
   tabChordDetail: $('tab-chord-detail'),
+  tracksTab: $('tab-view-tracks'),
+  stemsTab: $('tab-view-stems'),
+  tracksPanel: $('tracks-panel'),
+  stemsPanel: $('stems-panel'),
+  addTabStems: $('btn-add-tab-stems'),
+  tabStemsInput: $('tab-stems-input'),
+  tabStemsSummary: $('tab-stems-summary'),
+  tabStemsList: $('tab-stems-list'),
+  tabStemsView: $('tab-stems-view'),
+  addTabStemsView: $('btn-add-tab-stems-view'),
+  tabStemRuler: $('tab-stem-ruler'),
+  tabStemLanes: $('tab-stem-lanes'),
+  tabStemEmpty: $('tab-stem-empty'),
+  tabStemPlayhead: $('tab-stem-playhead'),
   tabScaleStyle: $('tab-scale-style'),
   tabScaleChordCount: $('tab-scale-chord-count'),
   tabScaleMinimumFit: $('tab-scale-minimum-fit'),
@@ -218,6 +233,12 @@ let playSource = 'audio';
 let videoPlayer = null;
 let mixer = null;
 let stemsMedia = null; // Which song's stems are currently loaded in the mixer; re-separate when the song changes
+let tabStemMixer = null;
+let tabStemFiles = [];
+let tabStemScrubbing = false;
+let scorePositionMs = 0;
+let activeSidebarTab = 'tracks';
+let tabStemRulerDuration = -1;
 
 /**
  * The current playback source. All three sources provide
@@ -349,7 +370,10 @@ function initAlphaTab() {
 
   api.scoreLoaded.on((score) => {
     resetTabChords();
+    clearUploadedTabStems();
     scoreLoaded = true;
+    activeSidebarTab = 'tracks';
+    updateSidebarTabUi();
     el.dropHint.classList.add('hide');
     el.title.textContent = score.title || '(Untitled)';
     el.artist.textContent = [score.artist, score.album].filter(Boolean).join(' — ');
@@ -372,16 +396,21 @@ function initAlphaTab() {
     scorePlaying = playing;
     el.play.textContent = playing ? '⏸' : '▶';
     if (playing) ledRun++; // Starting playback cancels any running test animation
-    else clearLeds();
+    handleUploadedStemPlayback(playing);
+    if (!playing) clearLeds();
   });
 
   api.playerPositionChanged.on((e) => {
     endTime = e.endTime;
+    scorePositionMs = e.currentTime;
     el.timeCur.textContent = fmtTime(e.currentTime);
     el.timeTotal.textContent = fmtTime(e.endTime);
     if (!seeking && e.endTime > 0) {
       el.seek.value = String(Math.round((e.currentTime / e.endTime) * 1000));
     }
+    syncUploadedStemPosition(e.currentTime);
+    if (renderTabStemRuler()) requestAnimationFrame(drawTabStemWaveforms);
+    updateTabStemPlayhead(e.currentTime / 1000);
   });
 
   api.playedBeatChanged.on((beat) => onBeat(beat));
@@ -412,6 +441,262 @@ function renderTrackList(score) {
     el.tracks.appendChild(row);
   });
 }
+
+function updateSidebarTabUi() {
+  const canShowStems = scoreLoaded && mode === 'tab';
+  el.stemsTab.disabled = !canShowStems;
+  el.tracksTab.classList.toggle('active', activeSidebarTab === 'tracks');
+  el.stemsTab.classList.toggle('active', activeSidebarTab === 'stems');
+  el.tracksTab.setAttribute('aria-selected', String(activeSidebarTab === 'tracks'));
+  el.stemsTab.setAttribute('aria-selected', String(activeSidebarTab === 'stems'));
+  el.tracksPanel.hidden = activeSidebarTab !== 'tracks';
+  el.stemsPanel.hidden = activeSidebarTab !== 'stems';
+
+  const showStems = canShowStems && activeSidebarTab === 'stems';
+  el.tabStemsView.hidden = !showStems;
+  if (mode === 'tab') el.viewport.hidden = showStems;
+  el.jianpuWrap.hidden = showStems || !(settings.showJianpu && mode === 'tab' && api?.score);
+  if (showStems) {
+    renderTabStemLanes();
+    requestAnimationFrame(drawTabStemWaveforms);
+  }
+}
+
+function selectSidebarTab(tab) {
+  if (tab === 'stems' && (mode !== 'tab' || !scoreLoaded)) return;
+  activeSidebarTab = tab;
+  updateSidebarTabUi();
+  if (tab === 'tracks') renderJianpu();
+}
+
+function updateTabStemPlayhead(timeSeconds) {
+  const duration = Math.max(endTime / 1000, tabStemMixer?.duration ?? 0);
+  const progress = duration > 0 ? Math.max(0, Math.min(1, timeSeconds / duration)) : 0;
+  const waveformWidth = Math.max(0, el.tabStemLanes.clientWidth - 200);
+  el.tabStemPlayhead.style.left = `${158 + waveformWidth * progress}px`;
+}
+
+function tabStemTimelineDuration() {
+  return Math.max(endTime / 1000, tabStemMixer?.duration ?? 0);
+}
+
+function renderTabStemLanes() {
+  el.tabStemLanes.querySelectorAll('.tab-stem-lane').forEach((lane) => lane.remove());
+  el.tabStemEmpty.hidden = Boolean(tabStemMixer?.tracks.length);
+  el.tabStemsSummary.textContent = tabStemMixer?.tracks.length
+    ? `${tabStemMixer.tracks.length} of 6 stems loaded. Play and seek with the score transport.`
+    : 'Load up to 6 aligned audio stems to play with this tablature.';
+  el.tabStemsList.replaceChildren();
+
+  if (tabStemMixer?.tracks.length) {
+    for (const [index, track] of tabStemMixer.tracks.entries()) {
+      const sidebarName = document.createElement('div');
+      sidebarName.className = 'tab-stem-list-item';
+      sidebarName.title = track.label;
+      sidebarName.textContent = `${index + 1}. ${track.label}`;
+      el.tabStemsList.append(sidebarName);
+
+      const lane = document.createElement('div');
+      lane.className = 'tab-stem-lane';
+      const name = document.createElement('div');
+      name.className = 'tab-stem-lane-name';
+      name.title = track.label;
+      name.textContent = track.label;
+      const waveform = document.createElement('canvas');
+      waveform.className = 'tab-stem-waveform';
+      waveform.dataset.stemId = track.id;
+      waveform.setAttribute('aria-label', `Waveform for ${track.label}; click or drag to seek`);
+      const remove = document.createElement('button');
+      remove.className = 'tab-stem-remove';
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.title = `Remove ${track.label}`;
+      remove.setAttribute('aria-label', `Remove ${track.label}`);
+      remove.addEventListener('click', () => removeUploadedTabStem(track.id));
+      lane.append(name, waveform, remove);
+      el.tabStemLanes.insertBefore(lane, el.tabStemPlayhead);
+    }
+  }
+
+  renderTabStemRuler();
+  updateTabStemPlayhead(scorePositionMs / 1000);
+  drawTabStemWaveforms();
+}
+
+function renderTabStemRuler() {
+  const duration = tabStemTimelineDuration();
+  if (duration === tabStemRulerDuration) return false;
+  tabStemRulerDuration = duration;
+  const ruler = document.createElement('div');
+  ruler.className = 'tab-stem-ruler-track';
+  for (let tick = 0; tick <= 4; tick++) {
+    const label = document.createElement('span');
+    label.textContent = fmtTime((duration * tick * 1000) / 4);
+    ruler.append(label);
+  }
+  el.tabStemRuler.replaceChildren(document.createElement('span'), ruler, document.createElement('span'));
+  return true;
+}
+
+const TAB_STEM_COLORS = ['#55c2ff', '#ffbe55', '#bb83ff', '#63df9b', '#ff7185', '#d2da66'];
+
+function drawTabStemWaveforms() {
+  if (!tabStemMixer?.tracks.length) return;
+  for (const [index, track] of tabStemMixer.tracks.entries()) {
+    const canvas = el.tabStemLanes.querySelector(`canvas[data-stem-id="${CSS.escape(track.id)}"]`);
+    if (!canvas) continue;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (!width || !height) continue;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const context = canvas.getContext('2d');
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.strokeStyle = 'rgba(255,255,255,0.12)';
+    context.beginPath();
+    context.moveTo(0, height / 2);
+    context.lineTo(width, height / 2);
+    context.stroke();
+    const peaks = waveformPeaks(track.buffer, Math.min(1800, Math.max(1, Math.round(width * dpr))));
+    const binWidth = width / peaks.length;
+    context.fillStyle = TAB_STEM_COLORS[index % TAB_STEM_COLORS.length];
+    for (let bin = 0; bin < peaks.length; bin++) {
+      const amplitude = Math.max(1, peaks[bin] * height * 0.44);
+      context.fillRect(bin * binWidth, (height - amplitude) / 2, Math.max(1, binWidth), amplitude);
+    }
+  }
+}
+
+function syncUploadedStemPosition(positionMs, force = false) {
+  if (!tabStemMixer?.ready || mode !== 'tab') return;
+  const target = Math.max(0, Math.min(positionMs / 1000, tabStemMixer.duration));
+  if (force || tabStemMixer.paused) tabStemMixer.currentTime = target;
+}
+
+function handleUploadedStemPlayback(playing) {
+  if (!tabStemMixer?.ready) return;
+  if (mode !== 'tab' || !playing) {
+    tabStemMixer.pause();
+    return;
+  }
+  tabStemMixer.setRate(settings.speed / 100);
+  syncUploadedStemPosition(scorePositionMs, true);
+  tabStemMixer.play().catch((error) => toast(`Stem playback failed: ${error.message}`, true));
+}
+
+function updateScoreAudioVolume() {
+  if (api) api.masterVolume = mode === 'tab' && tabStemMixer?.ready ? 0 : 1;
+}
+
+function clearUploadedTabStems() {
+  tabStemMixer?.destroy();
+  tabStemMixer = null;
+  tabStemFiles = [];
+  scorePositionMs = 0;
+  endTime = 0;
+  tabStemRulerDuration = -1;
+  updateScoreAudioVolume();
+  renderTabStemLanes();
+}
+
+async function addUploadedTabStems(files) {
+  if (!scoreLoaded || mode !== 'tab') {
+    toast('Load a tablature score before adding audio stems.', true);
+    return;
+  }
+  if (!files.length) return;
+  if ((tabStemMixer?.tracks.length ?? 0) + files.length > 6) {
+    toast(`You can load up to 6 audio stems; ${6 - (tabStemMixer?.tracks.length ?? 0)} slot(s) remain.`, true);
+    return;
+  }
+  const supported = /\.(mp3|m4a|wav|aac|flac|ogg|opus|aif|aiff|caf)$/i;
+  const invalid = files.find((file) => !file.type.startsWith('audio/') && !supported.test(file.name));
+  if (invalid) {
+    toast(`"${invalid.name}" does not appear to be a supported audio file.`, true);
+    return;
+  }
+
+  const mixerToLoad = tabStemMixer ?? new StemMixer();
+  const wasPlaying = scorePlaying;
+  busy('Loading audio stems…');
+  try {
+    if (tabStemMixer) {
+      await mixerToLoad.addFiles(files, (loaded, total) => busy(`Decoding stems ${loaded}/${total}…`));
+    } else {
+      await mixerToLoad.loadFiles(files, (loaded, total) => busy(`Decoding stems ${loaded}/${total}…`));
+    }
+    tabStemMixer = mixerToLoad;
+    tabStemFiles.push(...files);
+    tabStemMixer.setRate(settings.speed / 100);
+    syncUploadedStemPosition(scorePositionMs, true);
+    updateScoreAudioVolume();
+    renderTabStemLanes();
+    busy(null);
+    if (wasPlaying) handleUploadedStemPlayback(true);
+    toast(`${files.length} audio stem${files.length === 1 ? '' : 's'} loaded.`);
+  } catch (error) {
+    if (!tabStemMixer) mixerToLoad.destroy();
+    busy(null);
+    toast(`Unable to load audio stems: ${error.message}`, true);
+  }
+}
+
+function removeUploadedTabStem(id) {
+  if (!tabStemMixer) return;
+  const index = tabStemMixer.tracks.findIndex((track) => track.id === id);
+  if (index < 0) return;
+  tabStemMixer.removeTrack(id);
+  tabStemFiles.splice(index, 1);
+  if (!tabStemMixer.tracks.length) {
+    tabStemMixer.destroy();
+    tabStemMixer = null;
+    updateScoreAudioVolume();
+  }
+  renderTabStemLanes();
+}
+
+function seekScoreFromTabStems(clientX) {
+  if (!api || endTime <= 0) return;
+  const waveform = el.tabStemLanes.querySelector('.tab-stem-waveform');
+  if (!waveform) return;
+  const rect = waveform.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  const targetMs = Math.min(ratio * tabStemTimelineDuration() * 1000, endTime);
+  scorePositionMs = targetMs;
+  api.timePosition = targetMs;
+  syncUploadedStemPosition(targetMs, true);
+  updateTabStemPlayhead(targetMs / 1000);
+}
+
+on(el.tracksTab, 'click', () => selectSidebarTab('tracks'));
+on(el.stemsTab, 'click', () => selectSidebarTab('stems'));
+on(el.addTabStems, 'click', () => el.tabStemsInput.click());
+on(el.addTabStemsView, 'click', () => el.tabStemsInput.click());
+on(el.tabStemsInput, 'change', (event) => {
+  const files = [...(event.target.files ?? [])];
+  event.target.value = '';
+  addUploadedTabStems(files);
+});
+on(el.tabStemLanes, 'pointerdown', (event) => {
+  if (!event.target.closest('.tab-stem-waveform')) return;
+  tabStemScrubbing = true;
+  el.tabStemLanes.setPointerCapture(event.pointerId);
+  seekScoreFromTabStems(event.clientX);
+});
+on(el.tabStemLanes, 'pointermove', (event) => {
+  if (tabStemScrubbing) seekScoreFromTabStems(event.clientX);
+});
+on(el.tabStemLanes, 'pointerup', () => {
+  tabStemScrubbing = false;
+});
+on(el.tabStemLanes, 'pointercancel', () => {
+  tabStemScrubbing = false;
+});
+window.addEventListener('resize', () => {
+  drawTabStemWaveforms();
+});
 
 /* ---------------- Light LEDs ---------------- */
 
@@ -1388,6 +1673,9 @@ function stopChordTick() {
 function enterChordMode(result) {
   if (mode === 'stems') exitStemsMode();
   mode = 'chord';
+  activeSidebarTab = 'tracks';
+  updateSidebarTabUi();
+  updateScoreAudioVolume();
   document.body.classList.add('chord-mode');
   document.body.classList.remove('picker-mode');
   el.viewport.hidden = true;
@@ -1497,6 +1785,9 @@ function exitChordMode() {
   audio.pause();
   stopChordTick();
   mode = 'tab';
+  activeSidebarTab = 'tracks';
+  updateSidebarTabUi();
+  updateScoreAudioVolume();
   document.body.classList.remove('chord-mode');
   el.viewport.hidden = false;
   el.ccViewport.hidden = true;
@@ -1890,6 +2181,9 @@ function enterPickerMode(chordName = null) {
   if (api) api.stop();
 
   mode = 'picker';
+  activeSidebarTab = 'tracks';
+  updateSidebarTabUi();
+  updateScoreAudioVolume();
   document.body.classList.add('picker-mode');
   el.viewport.hidden = true;
   el.ccViewport.hidden = true;
@@ -1938,6 +2232,9 @@ function exitPickerMode(target = 'tab') {
   }
 
   mode = 'tab';
+  activeSidebarTab = 'tracks';
+  updateSidebarTabUi();
+  updateScoreAudioVolume();
   el.viewport.hidden = false;
   restoreTabHeader();
   requestAnimationFrame(() => api?.render());
@@ -2419,6 +2716,9 @@ on(el.play, 'click', () => {
     return;
   }
   if (!scoreLoaded) return toast('Open a score or select Analyze Chords to analyze an audio file.');
+  if (tabStemMixer?.ready) {
+    tabStemMixer.ctx.resume().catch((error) => toast(`Stem audio could not start: ${error.message}`, true));
+  }
   api.playPause();
 });
 
@@ -2432,6 +2732,9 @@ on(el.stop, 'click', () => {
     el.timeCur.textContent = '00:00';
   } else {
     api?.stop();
+    scorePositionMs = 0;
+    if (tabStemMixer?.ready) tabStemMixer.currentTime = 0;
+    updateTabStemPlayhead(0);
   }
   clearLeds();
 });
@@ -2443,6 +2746,9 @@ on(el.rewind, 'click', () => {
     el.seek.value = '0';
   } else if (api) {
     api.tickPosition = 0;
+    scorePositionMs = 0;
+    if (tabStemMixer?.ready) tabStemMixer.currentTime = 0;
+    updateTabStemPlayhead(0);
   }
   clearLeds();
 });
@@ -2465,7 +2771,11 @@ on(el.seek, 'change', () => {
       if (chart?.beatIndex >= 0) onChordBeat(chart.beatIndex);
     }
   } else if (api && endTime > 0) {
-    api.timePosition = ratio * endTime;
+    const targetMs = ratio * endTime;
+    scorePositionMs = targetMs;
+    api.timePosition = targetMs;
+    syncUploadedStemPosition(targetMs, true);
+    updateTabStemPlayhead(targetMs / 1000);
   }
 });
 
@@ -2476,6 +2786,7 @@ on(el.speed, 'input', () => {
   audio.playbackRate = settings.speed / 100;
   if (videoPlayer?.available) videoPlayer.setRate(settings.speed / 100);
   if (mixer?.ready) mixer.setRate(settings.speed / 100);
+  if (tabStemMixer?.ready) tabStemMixer.setRate(settings.speed / 100);
   save();
 });
 
@@ -2646,6 +2957,9 @@ async function enterStemsMode(media, title) {
   }
 
   mode = 'stems';
+  activeSidebarTab = 'tracks';
+  updateSidebarTabUi();
+  updateScoreAudioVolume();
   document.body.classList.add('stems-mode');
   document.body.classList.remove('chord-mode', 'picker-mode');
   el.viewport.hidden = true;
@@ -2678,6 +2992,9 @@ function exitStemsMode() {
   mixer?.pause();
   stopChordTick();
   mode = 'tab';
+  activeSidebarTab = 'tracks';
+  updateSidebarTabUi();
+  updateScoreAudioVolume();
   playSource = 'audio';
   document.body.classList.remove('stems-mode');
   el.stemsView.hidden = true;
@@ -2998,7 +3315,7 @@ if (el.jianpuKey && !el.jianpuKey.options.length) {
 
 function renderJianpu() {
   if (!el.jianpuWrap) return;
-  const show = settings.showJianpu && mode === 'tab' && api?.score;
+  const show = settings.showJianpu && mode === 'tab' && activeSidebarTab === 'tracks' && api?.score;
   el.jianpuWrap.hidden = !show;
   if (!show) return;
 
