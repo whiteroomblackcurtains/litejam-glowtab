@@ -7,12 +7,14 @@ export function normalizeTabStemCalibration(value = {}) {
   };
 }
 
-export function audioTimeForScore(scoreSeconds, calibration) {
-  return calibration.delaySeconds + Math.max(0, scoreSeconds);
+export function audioTimeForScore(scoreSeconds, calibration, playbackRate = 1) {
+  const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+  return calibration.delaySeconds + Math.max(0, scoreSeconds) * rate;
 }
 
-export function scoreTimeForAudio(audioSeconds, calibration) {
-  return Math.max(0, audioSeconds - calibration.delaySeconds);
+export function scoreTimeForAudio(audioSeconds, calibration, playbackRate = 1) {
+  const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+  return Math.max(0, audioSeconds - calibration.delaySeconds) / rate;
 }
 
 export function isScorePositionSeek(previousSeconds, currentSeconds, elapsedSeconds, playbackRate, toleranceSeconds = 0.3) {

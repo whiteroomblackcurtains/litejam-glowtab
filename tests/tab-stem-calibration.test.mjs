@@ -20,11 +20,18 @@ test('normalizes missing, invalid, and out-of-range calibration values', () => {
   });
 });
 
-test('maps score time to the delayed audio timeline without reapplying playback rate', () => {
+test('maps score time to the delayed audio timeline at normal playback speed', () => {
   const calibration = normalizeTabStemCalibration({ delaySeconds: 2.3, ratePercent: 1.8 });
   const audioTime = audioTimeForScore(18, calibration);
   assert.equal(audioTime, 20.3);
   assert.equal(scoreTimeForAudio(audioTime, calibration), 18);
+});
+
+test('maps positions between the alphaTab clock and audio timeline at half speed', () => {
+  const calibration = normalizeTabStemCalibration({ delaySeconds: 2.3, ratePercent: 1.8 });
+  const audioTime = audioTimeForScore(18, calibration, 0.5);
+  assert.equal(audioTime, 11.3);
+  assert.equal(scoreTimeForAudio(audioTime, calibration, 0.5), 18);
 });
 
 test('keeps negative positions at the calibrated starting point', () => {

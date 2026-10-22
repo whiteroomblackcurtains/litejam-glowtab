@@ -438,7 +438,7 @@ function initAlphaTab() {
           tabStemScoreSample.positionSeconds,
           positionSeconds,
           (now - tabStemScoreSample.observedAt) / 1000,
-          (settings.speed / 100) * (1 + tabStemCalibration.ratePercent / 100),
+          1,
         )));
     tabStemScoreSample = { positionSeconds, observedAt: now };
     endTime = e.endTime;
@@ -651,15 +651,20 @@ function saveTabStemCalibration() {
 }
 
 function stemTimeForScore(positionMs) {
-  return audioTimeForScore(positionMs / 1000, tabStemCalibration);
+  return audioTimeForScore(positionMs / 1000, tabStemCalibration, settings.speed / 100);
 }
 
 function scoreTimeForStem(positionSeconds) {
-  return scoreTimeForAudio(positionSeconds, tabStemCalibration);
+  return scoreTimeForAudio(positionSeconds, tabStemCalibration, settings.speed / 100);
 }
 
 function readScorePositionMs() {
-  const position = Number(api?.timePosition);
+  let position = Number(api?.timePosition);
+  const tickPosition = Number(api?.tickPosition);
+  if (Number.isFinite(tickPosition) && tickPosition > 0 && (!Number.isFinite(position) || position <= 0)) {
+    api.tickPosition = tickPosition;
+    position = Number(api.timePosition);
+  }
   return Number.isFinite(position) && position >= 0 ? position : scorePositionMs;
 }
 
@@ -722,13 +727,11 @@ function applyTabPlaybackSpeed() {
   const correction = mode === 'tab' && tabStemMixer?.ready ? 1 + tabStemCalibration.ratePercent / 100 : 1;
   const playbackSpeed = (settings.speed / 100) * correction;
   if (Math.abs(api.playbackSpeed - playbackSpeed) < 0.000001) return;
-  const positionMs = readScorePositionMs();
+  const tickPosition = Number(api.tickPosition);
   api.playbackSpeed = playbackSpeed;
-  if (Number.isFinite(positionMs)) {
-    api.timePosition = positionMs;
-    scorePositionMs = positionMs;
-    rememberTabStemScorePosition(positionMs);
-  }
+  if (Number.isFinite(tickPosition) && Number(api.tickPosition) !== tickPosition) api.tickPosition = tickPosition;
+  scorePositionMs = readScorePositionMs();
+  rememberTabStemScorePosition(scorePositionMs);
 }
 
 function handleUploadedStemPlayback(playing) {
@@ -753,7 +756,9 @@ async function startTabPlaybackWithStems() {
   applyTabPlaybackSpeed();
   scorePositionMs = readScorePositionMs();
   tabStemMixer.setRate(settings.speed / 100);
-  const waitingForTabStart = scorePositionMs <= 0 && tabStemMixer.currentTime < tabStemCalibration.delaySeconds;
+  const tickPosition = Number(api.tickPosition);
+  const scoreAtStart = Number.isFinite(tickPosition) ? tickPosition <= 0 : scorePositionMs <= 0;
+  const waitingForTabStart = scoreAtStart && tabStemMixer.currentTime < tabStemCalibration.delaySeconds;
   if (!waitingForTabStart) syncUploadedStemPosition(scorePositionMs, true);
   tabStemStartPending = waitingForTabStart;
   el.play.textContent = '⏸';
@@ -3046,7 +3051,6 @@ on(el.seek, 'change', () => {
 
 on(el.speed, 'input', () => {
   settings.speed = Number(el.speed.value);
-  rememberTabStemScorePosition(scorePositionMs);
   el.speedOut.textContent = `${settings.speed}%`;
   applyTabPlaybackSpeed();
   audio.playbackRate = settings.speed / 100;
