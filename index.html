@@ -42,8 +42,19 @@
       <main class="main">
         <aside id="side" class="side">
           <section class="panel">
-            <h3>Tracks</h3>
-            <div id="tracks" class="tracks"><p class="muted small">Tracks appear after a score is loaded.</p></div>
+            <div class="side-tabs" role="tablist" aria-label="Score tracks and audio stems">
+              <button id="tab-view-tracks" class="side-tab active" type="button" role="tab" aria-selected="true">Tracks</button>
+              <button id="tab-view-stems" class="side-tab" type="button" role="tab" aria-selected="false" disabled>Stems</button>
+            </div>
+            <div id="tracks-panel" role="tabpanel">
+              <div id="tracks" class="tracks"><p class="muted small">Tracks appear after a score is loaded.</p></div>
+            </div>
+            <div id="stems-panel" role="tabpanel" hidden>
+              <button id="btn-add-tab-stems" class="btn btn-sm" type="button">Load Audio Stems</button>
+              <input id="tab-stems-input" type="file" accept="audio/*,.mp3,.m4a,.wav,.aac,.flac,.ogg,.opus,.aif,.aiff,.caf" multiple hidden />
+              <p id="tab-stems-summary" class="muted small">Load up to 6 aligned audio stems to play with this tablature.</p>
+              <div id="tab-stems-list" class="tab-stems-list"></div>
+            </div>
           </section>
 
           <section class="panel">
@@ -444,6 +455,21 @@
                 <p class="muted small">Supports Guitar Pro, MusicXML, and Capella files</p>
                 <p><button id="btn-demo" class="btn btn-sm">Load Demo Score</button></p>
               </div>
+            </div>
+          </div>
+
+          <div id="tab-stems-view" class="viewport tab-stems-view" hidden>
+            <div class="tab-stems-toolbar">
+              <div>
+                <h2>Audio Stems</h2>
+                <p class="muted small">Click or drag on a lane to seek the tablature and stems together.</p>
+              </div>
+              <button id="btn-add-tab-stems-view" class="btn btn-sm" type="button">Add Stems</button>
+            </div>
+            <div id="tab-stem-ruler" class="tab-stem-ruler"></div>
+            <div id="tab-stem-lanes" class="tab-stem-lanes">
+              <div id="tab-stem-empty" class="tab-stem-empty">Load audio stems from the sidebar to see their waveforms here.</div>
+              <div id="tab-stem-playhead" class="tab-stem-playhead" aria-hidden="true"></div>
             </div>
           </div>
 

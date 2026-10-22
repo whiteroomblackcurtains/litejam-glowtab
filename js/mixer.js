@@ -15,6 +15,7 @@ export class StemMixer {
     this._playing = false;
     this._rate = 1;
     this.soloId = null;
+    this._nextTrackId = 0;
   }
 
   get ready() {
@@ -31,7 +32,8 @@ export class StemMixer {
 
   get currentTime() {
     if (!this._playing) return this._offset;
-    const t = this._offset + (this.ctx.currentTime - this._startedAt) * this._rate;
+    const elapsed = Math.max(0, this.ctx.currentTime - this._startedAt);
+    const t = this._offset + elapsed * this._rate;
     return Math.min(t, this.duration);
   }
 
@@ -77,6 +79,84 @@ export class StemMixer {
       onProgress?.(done, this.tracks.length);
     }
     this._applyGains();
+  }
+
+  async loadFiles(files, onProgress) {
+    this.destroy();
+    this.ctx = new (window.AudioContext ?? window.webkitAudioContext)();
+    this.master = this.ctx.createGain();
+    this.master.connect(this.ctx.destination);
+
+    this.tracks = files.map((file) => ({
+      id: `uploaded-${this._nextTrackId++}`,
+      label: file.name,
+      file,
+      buffer: null,
+      gain: null,
+      volume: 1,
+      muted: false,
+    }));
+
+    let done = 0;
+    for (const track of this.tracks) {
+      try {
+        track.buffer = await this.ctx.decodeAudioData(await track.file.arrayBuffer());
+        track.gain = this.ctx.createGain();
+        track.gain.connect(this.master);
+        done++;
+        onProgress?.(done, this.tracks.length);
+      } catch (error) {
+        this.destroy();
+        throw new Error(`Could not decode "${track.label}": ${error.message}`);
+      }
+    }
+    this._applyGains();
+  }
+
+  async addFiles(files, onProgress) {
+    if (!this.ctx || !this.master) return this.loadFiles(files, onProgress);
+    const additions = [];
+    try {
+      for (const file of files) {
+        const track = {
+          id: `uploaded-${this._nextTrackId++}`,
+          label: file.name,
+          file,
+          buffer: await this.ctx.decodeAudioData(await file.arrayBuffer()),
+          gain: this.ctx.createGain(),
+          volume: 1,
+          muted: false,
+        };
+        track.gain.connect(this.master);
+        additions.push(track);
+        onProgress?.(additions.length, files.length);
+      }
+    } catch (error) {
+      for (const track of additions) track.gain.disconnect();
+      throw new Error(`Could not decode "${files[additions.length]?.name ?? 'audio file'}": ${error.message}`);
+    }
+
+    const wasPlaying = this._playing;
+    const at = this.currentTime;
+    if (wasPlaying) this._stopSources();
+    this.tracks.push(...additions);
+    this._offset = at;
+    this._applyGains();
+    if (wasPlaying) this._startSources();
+  }
+
+  removeTrack(id) {
+    const index = this.tracks.findIndex((track) => track.id === id);
+    if (index < 0) return false;
+    const wasPlaying = this._playing;
+    const at = this.currentTime;
+    if (wasPlaying) this._stopSources();
+    this.tracks[index].gain?.disconnect();
+    this.tracks.splice(index, 1);
+    this._offset = Math.min(at, this.duration);
+    this._applyGains();
+    if (wasPlaying && this.tracks.length) this._startSources();
+    return true;
   }
 
   _applyGains() {
@@ -198,5 +278,6 @@ export class StemMixer {
     this.tracks = [];
     this.master = null;
     this._offset = 0;
+    this._nextTrackId = 0;
   }
 }

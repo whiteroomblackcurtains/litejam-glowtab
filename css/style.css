@@ -404,6 +404,48 @@ input[type="checkbox"] {
   padding: 1px 4px;
 }
 
+.side-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.side-tab {
+  flex: 1;
+  padding: 6px 8px;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.side-tab.active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: rgba(0, 229, 255, 0.08);
+}
+
+.side-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tab-stems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.tab-stem-list-item {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Score area ---------- */
 
 .stage {
@@ -430,6 +472,111 @@ input[type="checkbox"] {
 
 .at-selection div {
   background: rgba(255, 45, 149, 0.14);
+}
+
+.tab-stems-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  background: #0d0f14;
+  overflow: hidden;
+}
+
+.tab-stems-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tab-stems-toolbar h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.tab-stems-toolbar p {
+  margin: 2px 0 0;
+}
+
+.tab-stem-ruler,
+.tab-stem-lane {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+}
+
+.tab-stem-ruler {
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tab-stem-ruler-track {
+  display: flex;
+  justify-content: space-between;
+}
+
+.tab-stem-lanes {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+
+.tab-stem-lane {
+  min-height: 76px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.tab-stem-lane-name {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-stem-waveform {
+  display: block;
+  width: 100%;
+  height: 58px;
+  border-radius: 4px;
+  background: #141820;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.tab-stem-remove {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.tab-stem-empty {
+  padding: 42px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.tab-stem-playhead {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 158px;
+  width: 2px;
+  background: #ff495e;
+  box-shadow: 0 0 8px rgba(255, 73, 94, 0.8);
+  pointer-events: none;
 }
 
 .at-cursor-beat {
