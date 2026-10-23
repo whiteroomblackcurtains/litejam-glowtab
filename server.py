@@ -34,9 +34,12 @@ from scale_store import (
     get_session_user,
     google_identity,
     init_db,
+    list_tab_palettes,
     list_scales,
     list_tunings,
+    delete_tab_palette,
     save_scales,
+    save_tab_palette,
     save_tuning,
     upsert_google_user,
     consume_oauth_state,
@@ -52,7 +55,7 @@ _chord_analyzer = None
 # The frontend compares this with its own constant. Increment it when adding an API
 # so a version mismatch ("new web app, old server") is reported clearly instead of
 # producing an incomprehensible error.
-API_VERSION = 9
+API_VERSION = 10
 
 PORT = int(os.environ.get('PORT', '8123'))
 HOST = os.environ.get('HOST', '127.0.0.1')
@@ -797,6 +800,12 @@ class Handler(SimpleHTTPRequestHandler):
                 'tunings': list_tunings(user['id'] if user else None),
                 'authenticated': bool(user),
             })
+        if parsed.path == '/api/tab-palettes':
+            user = self.current_user()
+            return self.send_json({
+                'palettes': list_tab_palettes(user['id'] if user else None),
+                'authenticated': bool(user),
+            })
         if parsed.path.startswith('/api/job/'):
             job_id = parsed.path.rsplit('/', 1)[-1]
             job = get_job(job_id)
@@ -848,18 +857,19 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
-        if parsed.path != '/api/scales':
+        if parsed.path not in ('/api/scales', '/api/tab-palettes'):
             return self.fail('Not found.', 404)
         if not self.same_origin_request():
             return self.fail('Request origin could not be verified.', 403)
 
         user = self.current_user()
         if not user:
-            return self.fail('Sign in with Google to delete personal scales.', 401)
+            noun = 'palettes' if parsed.path == '/api/tab-palettes' else 'scales'
+            return self.fail(f'Sign in with Google to delete personal {noun}.', 401)
 
         length = self.content_length()
         if length <= 0 or length > 16 * 1024:
-            return self.fail('Scale data is missing or too large.')
+            return self.fail('Saved item data is missing or too large.')
         try:
             payload = json.loads(self.read_body(length).decode('utf-8'))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -867,9 +877,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self.fail('Request body must be a JSON object.')
         try:
-            deleted_count = delete_scale(
-                user['id'], payload.get('name'), payload.get('rootNote')
-            )
+            if parsed.path == '/api/tab-palettes':
+                deleted_count = delete_tab_palette(user['id'], payload.get('name'))
+            else:
+                deleted_count = delete_scale(user['id'], payload.get('name'), payload.get('rootNote'))
         except (AttributeError, ValueError) as exc:
             return self.fail(str(exc))
         return self.send_json({'deletedCount': deleted_count})
@@ -884,7 +895,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         length = self.content_length()
 
-        if parsed.path in ('/api/scales', '/api/tunings', '/auth/logout'):
+        if parsed.path in ('/api/scales', '/api/tunings', '/api/tab-palettes', '/auth/logout'):
             if not self.same_origin_request():
                 return self.fail('Request origin could not be verified.', 403)
 
@@ -897,7 +908,7 @@ class Handler(SimpleHTTPRequestHandler):
                 )
 
             user = self.current_user()
-            noun = 'tunings' if parsed.path == '/api/tunings' else 'scales'
+            noun = 'tab palettes' if parsed.path == '/api/tab-palettes' else ('tunings' if parsed.path == '/api/tunings' else 'scales')
             if not user:
                 return self.fail(f'Sign in with Google to save personal {noun}.', 401)
             if length <= 0 or length > 16 * 1024:
@@ -909,6 +920,9 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(payload, dict):
                 return self.fail('Request body must be a JSON object.')
             try:
+                if parsed.path == '/api/tab-palettes':
+                    palette = save_tab_palette(user['id'], payload.get('name'), payload.get('colors'))
+                    return self.send_json({'palette': palette}, 201)
                 if parsed.path == '/api/tunings':
                     tuning = save_tuning(user['id'], payload.get('name'), payload.get('notes'))
                     return self.send_json({'tuning': tuning}, 201)

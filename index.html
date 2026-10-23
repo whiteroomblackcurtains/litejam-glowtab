@@ -92,6 +92,27 @@
               <span>Color by Chord Quality</span>
             </label>
             <p class="muted small">Major chords glow blue; minor chords glow red. Turn this off to use the Current Note color for all chords.</p>
+            <hr class="panel-sep" />
+            <h4>Tab Syntax Colors</h4>
+            <label class="row">
+              <input id="toggle-tab-syntax-colors" type="checkbox" />
+              <span>Color technique notes</span>
+            </label>
+            <div id="tab-syntax-palette" class="tab-syntax-palette"></div>
+            <div class="row">
+              <select id="tab-palette-preset" aria-label="Saved tablature palette">
+                <option value="">Saved palettes</option>
+              </select>
+            </div>
+            <label class="row">
+              <span>Palette name</span>
+              <input id="tab-palette-name" type="text" maxlength="60" placeholder="e.g. Neon Techniques" />
+            </label>
+            <div class="row gap">
+              <button id="btn-tab-palette-save" class="btn btn-sm" type="button" disabled>Save Palette</button>
+              <button id="btn-tab-palette-delete" class="btn btn-sm" type="button" disabled>Delete</button>
+            </div>
+            <p id="tab-palette-account-status" class="muted small">Sign in below to save palettes to your account.</p>
             <label class="row">
               <input id="toggle-reverse" type="checkbox" />
               <span>Reverse String Order</span>

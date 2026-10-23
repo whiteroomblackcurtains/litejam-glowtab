@@ -1,4 +1,4 @@
-import { LiteJam, hexToRgb, scaleColor, packNotes, MAX_FRET } from './litejam-ble.js';
+import { LiteJam, hexToRgb, scaleColor, packNotes, prioritizeGroups, MAX_FRET } from './litejam-ble.js';
 import { FretboardView } from './fretboard.js';
 import { ChordChart } from './chordchart.js';
 import { ChordPicker } from './chordpicker.js';
@@ -20,6 +20,7 @@ import { CHORD_TYPES, SHARED_COLOR, analyzeTrack, chordTypeIntervals, inversionV
 import { recommendScales } from './tabscales.js';
 import { StemMixer } from './mixer.js';
 import { waveformPeaks } from './waveform.js';
+import { DEFAULT_TAB_SYNTAX_COLORS, TAB_SYNTAX_GROUPS, tabSyntaxKey } from './tab-syntax-colors.js';
 import {
   audioTimeForScore,
   isScorePositionSeek,
@@ -66,6 +67,13 @@ const el = {
   scaleAllRoots: $('scale-all-roots'),
   scaleRootColor: $('scale-root-color'),
   scaleNoteColor: $('scale-note-color'),
+  toggleTabSyntaxColors: $('toggle-tab-syntax-colors'),
+  tabSyntaxPalette: $('tab-syntax-palette'),
+  tabPalettePreset: $('tab-palette-preset'),
+  tabPaletteName: $('tab-palette-name'),
+  tabPaletteSave: $('btn-tab-palette-save'),
+  tabPaletteDelete: $('btn-tab-palette-delete'),
+  tabPaletteAccountStatus: $('tab-palette-account-status'),
   toggleScaleWithTab: $('toggle-scale-with-tab'),
   scaleSave: $('btn-scale-save'),
   scaleAccountStatus: $('scale-account-status'),
@@ -275,6 +283,8 @@ function load() {
     colorPaint: '#39ff14',
     colorScaleRoot: '#ff4d4d',
     colorScaleNote: '#4d8bff',
+    tabSyntaxColors: { ...DEFAULT_TAB_SYNTAX_COLORS },
+    showTabSyntaxColors: true,
     showScaleWithTab: false,
     showNext: true,
     brightness: 85,
@@ -307,6 +317,7 @@ function load() {
     if (!merged.tabStemCalibrations || typeof merged.tabStemCalibrations !== 'object' || Array.isArray(merged.tabStemCalibrations)) {
       merged.tabStemCalibrations = {};
     }
+    merged.tabSyntaxColors = { ...defaults.tabSyntaxColors, ...(merged.tabSyntaxColors ?? {}) };
     return merged;
   } catch {
     return defaults;
@@ -397,6 +408,10 @@ function initAlphaTab() {
     el.dropHint.classList.add('hide');
     el.title.textContent = score.title || '(Untitled)';
     el.artist.textContent = [score.artist, score.album].filter(Boolean).join(' — ');
+    const preferredTrack = score.tracks.find((track) => /guitar\s*1/i.test(track.name ?? ''))
+      ?? score.tracks.find((track) => track.staves?.some((staff) => (staff.tuning?.length ?? 0) >= 6))
+      ?? score.tracks[0];
+    if (preferredTrack) api.renderTracks([preferredTrack]);
     renderTrackList(score);
     busy('Rendering score…');
   });
@@ -1005,6 +1020,14 @@ function hwString(guitarString) {
   return settings.reverseStrings ? 7 - guitarString : guitarString;
 }
 
+function harmonicFret(note) {
+  const value = Number(note?.harmonicValue);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Number(note?.harmonicType) === 1
+    ? Math.round(value)
+    : Math.round((Number(note?.fret) || 0) + value);
+}
+
 /**
  * Which string and fret to light for the notes in this beat (guitar convention: 1 = thin string).
  * Score positions are used unchanged for standard tuning or when the score
@@ -1016,15 +1039,22 @@ function beatPositions(beat) {
     (n) => !n.isTieDestination && n.string != null && n.fret != null && n.fret >= 0
   );
   if (!settings.useCustomTuningForScoreNotes || sameTuning(settings.tuning, STANDARD_TUNING)) {
-    return notes.map((note) => ({ note, gstr: atStringToGuitar(note.string), fret: note.fret }));
+    return notes.map((note) => ({
+      note,
+      gstr: atStringToGuitar(note.string),
+      fret: harmonicFret(note) ?? note.fret,
+    }));
   }
-  // Harmonics should light the fret being pressed, so use the pitch without the harmonic
   const requests = notes.map((n) => ({
     pitch: n.realValueWithoutHarmonic ?? n.realValue,
     preferred: atStringToGuitar(n.string),
   }));
   const spots = placeNotes(requests, settings.tuning, MAX_FRET);
-  return notes.flatMap((note, i) => (spots[i] ? [{ note, gstr: spots[i].string, fret: spots[i].fret }] : []));
+  return notes.flatMap((note, i) => {
+    const fret = harmonicFret(note);
+    if (fret != null) return [{ note, gstr: atStringToGuitar(note.string), fret }];
+    return spots[i] ? [{ note, gstr: spots[i].string, fret: spots[i].fret }] : [];
+  });
 }
 
 function beatToNotes(beat) {
@@ -1035,9 +1065,20 @@ function currentGroups(beat) {
   const b = settings.brightness / 100;
   const groups = [];
 
-  const now = beatToNotes(beat);
-  if (now.length) {
-    groups.push({ leds: packNotes(now), color: scaleColor(hexToRgb(settings.colorMain), b) });
+  const positions = beatPositions(beat);
+  const now = positions.map(({ gstr, fret }) => ({ string: hwString(gstr), fret }));
+  if (positions.length) {
+    const syntaxNotes = new Map();
+    for (const { note, gstr, fret } of positions) {
+      const key = settings.showTabSyntaxColors ? tabSyntaxKey(note, beat) : null;
+      const color = key && settings.tabSyntaxColors[key];
+      const groupKey = color ? `syntax:${key}` : 'main';
+      if (!syntaxNotes.has(groupKey)) syntaxNotes.set(groupKey, { color: color ?? settings.colorMain, notes: [] });
+      syntaxNotes.get(groupKey).notes.push({ string: hwString(gstr), fret });
+    }
+    for (const { color, notes } of syntaxNotes.values()) {
+      groups.push({ leds: packNotes(notes), color: scaleColor(hexToRgb(color), b) });
+    }
   }
 
   if (settings.showNext) {
@@ -1050,7 +1091,7 @@ function currentGroups(beat) {
     }
   }
 
-  return groups;
+  return prioritizeGroups(groups);
 }
 
 // Bend-animation generation counter: changing beats or turning off the lights stops the previous slide
@@ -1102,9 +1143,70 @@ async function animateBends(bends, baseGroups, run) {
     if (lit.length) {
       const groups = [...baseGroups, { leds: packNotes(lit), color }];
       fretboard.setGroups(groups);
-      if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+      if (guitar.status === 'connected') guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...groups]));
     }
     await new Promise((r) => setTimeout(r, 85));
+  }
+}
+
+function removeLedPositions(groups, positions) {
+  const blocked = new Set(positions.map(({ string, fret }) => `${string}:${fret}`));
+  return groups.flatMap((group) => {
+    const notes = [];
+    for (const led of group.leds ?? []) {
+      for (const string of led.strings ?? []) {
+        if (!blocked.has(`${string}:${led.fret}`)) notes.push({ string, fret: led.fret });
+      }
+    }
+    return notes.length ? [{ ...group, leds: packNotes(notes) }] : [];
+  });
+}
+
+function slideTargets(beat) {
+  return beatPositions(beat).flatMap(({ note, gstr, fret }) => {
+    const target = note.slideTarget;
+    if (!target || target.fret == null || target.string == null || target.fret === note.fret) return [];
+    const key = tabSyntaxKey(note, beat);
+    const color = key && settings.tabSyntaxColors[key];
+    return [{
+      from: fret,
+      to: harmonicFret(target) ?? target.fret,
+      string: hwString(gstr),
+      color: color ?? settings.colorMain,
+    }];
+  });
+}
+
+async function animateSlides(slides, baseGroups, beat, run) {
+  const starts = slides.map(({ string, from }) => ({ string, fret: from }));
+  const groups = removeLedPositions(baseGroups, starts);
+  const startTime = Number(beat?.absolutePlaybackStart);
+  const nextTime = Number(beat?.nextBeat?.absolutePlaybackStart);
+  const duration = Number.isFinite(startTime) && Number.isFinite(nextTime) && nextTime > startTime
+    ? Math.min(500, Math.max(80, nextTime - startTime))
+    : 240;
+  const steps = Math.max(...slides.map(({ from, to }) => Math.abs(to - from)), 1);
+  const delay = Math.max(18, Math.floor(duration / (steps + 1)));
+  for (let step = 0; step <= steps; step++) {
+    if (run !== bendRun) return;
+    const moving = slides.map((slide) => ({
+      string: slide.string,
+      fret: Math.round(slide.from + (slide.to - slide.from) * (step / steps)),
+    }));
+    const byColor = new Map();
+    moving.forEach((note, index) => {
+      const color = slides[index].color;
+      if (!byColor.has(color)) byColor.set(color, []);
+      byColor.get(color).push(note);
+    });
+    const movingGroups = [...byColor.entries()].map(([color, notes]) => ({
+      leds: packNotes(notes),
+      color: scaleColor(hexToRgb(color), settings.brightness / 100),
+    }));
+    const frame = prioritizeGroups([...groups, ...movingGroups]);
+    fretboard.setGroups(frame);
+    if (guitar.status === 'connected') guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...frame]));
+    if (step < steps) await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
@@ -1184,11 +1286,11 @@ function updateTabScaleRecommendation(segment) {
     22,
     tabScaleAnalysis.minimumFit
   );
+
   const previousName = tabScaleAnalysis.selected?.name;
   tabScaleAnalysis.candidates = candidates;
   tabScaleAnalysis.selected = candidates.find((candidate) => candidate.name === previousName) ?? candidates[0] ?? null;
   el.tabScaleRecommendations.replaceChildren();
-
   if (!candidates.length) {
     activeTabScale = null;
     el.tabScaleRecommendations.add(new Option('No scales meet the minimum match', ''));
@@ -1257,14 +1359,14 @@ function refreshScaleWithTabDisplay() {
   if (!settings.showScaleWithTab && !activeTabScale && !tabChords) return;
   const groups = [...(scorePlaying ? scaleWithTabGroups() : []), ...currentGroups(lastBeat)];
   fretboard.setGroups(groups);
-  if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+  if (guitar.status === 'connected') guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...groups]));
 }
 
 /** Resend the current score lights and overlay to the guitar when paused or just after analysis starts */
 function resendLeds() {
   if (guitar.status !== 'connected') return;
   const scale = scorePlaying ? scaleWithTabGroups() : [];
-  guitar.sendSegment([...overlayLedGroups(), ...scale, ...currentGroups(lastBeat)]);
+  guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...scale, ...currentGroups(lastBeat)]));
 }
 
 function showTabChord(seg) {
@@ -1409,7 +1511,9 @@ function onBeat(beat) {
   const run = ++bendRun; // Cancel the bend animation still sliding from the previous beat
   const groups = [...scaleWithTabGroups(), ...currentGroups(beat)];
   fretboard.setGroups(groups);
-  if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+  if (guitar.status === 'connected') guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...groups]));
+  const slides = slideTargets(beat);
+  if (slides.length) animateSlides(slides, groups, beat, run);
   const bends = bendTargets(beat);
   if (bends.length) animateBends(bends, groups, run);
 }
@@ -1419,6 +1523,117 @@ let scorePlaying = false;
 
 let scalePresets = {};
 let scaleAuth = null;
+let tabPalettePresets = {};
+let tabPaletteAuthenticated = false;
+
+function buildTabSyntaxPalette() {
+  if (!el.tabSyntaxPalette) return;
+  el.tabSyntaxPalette.replaceChildren();
+  for (const group of TAB_SYNTAX_GROUPS) {
+    const heading = document.createElement('h5');
+    heading.textContent = group.title;
+    el.tabSyntaxPalette.append(heading);
+    for (const [key, label] of group.items) {
+      const row = document.createElement('label');
+      row.className = 'tab-syntax-color';
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.dataset.syntaxKey = key;
+      input.value = settings.tabSyntaxColors[key] ?? DEFAULT_TAB_SYNTAX_COLORS[key];
+      const text = document.createElement('span');
+      text.textContent = label;
+      row.append(input, text);
+      el.tabSyntaxPalette.append(row);
+      on(input, 'input', () => {
+        settings.tabSyntaxColors[key] = input.value;
+        save();
+        refreshTabLedColors();
+      });
+    }
+  }
+}
+
+function refreshTabLedColors() {
+  if (!lastBeat) return;
+  const groups = [...(scorePlaying ? scaleWithTabGroups() : []), ...currentGroups(lastBeat)];
+  fretboard.setGroups(groups);
+  if (guitar.status === 'connected') guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...groups]));
+}
+
+function applyTabPalette(colors) {
+  settings.tabSyntaxColors = { ...DEFAULT_TAB_SYNTAX_COLORS, ...colors };
+  buildTabSyntaxPalette();
+  save();
+  refreshTabLedColors();
+}
+
+async function loadTabPalettes() {
+  try {
+    const response = await fetch('/api/tab-palettes');
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+    const data = await response.json();
+    if (!Array.isArray(data.palettes)) throw new Error('Invalid palette data');
+    tabPaletteAuthenticated = !!data.authenticated;
+    tabPalettePresets = Object.fromEntries(data.palettes.map((palette) => [palette.name, palette]));
+    const selected = el.tabPalettePreset.value;
+    el.tabPalettePreset.replaceChildren(new Option('Saved palettes', ''));
+    for (const palette of data.palettes) el.tabPalettePreset.add(new Option(palette.name, palette.name));
+    el.tabPalettePreset.value = selected in tabPalettePresets ? selected : '';
+    el.tabPaletteSave.disabled = !tabPaletteAuthenticated;
+    el.tabPaletteDelete.disabled = !tabPaletteAuthenticated || !tabPalettePresets[el.tabPalettePreset.value];
+    el.tabPaletteAccountStatus.textContent = tabPaletteAuthenticated
+      ? 'Saved palettes sync with your account.'
+      : 'Sign in below to save palettes to your account.';
+  } catch (error) {
+    console.error('Failed to load tab palettes:', error);
+    toast('Unable to load tablature palettes.', true);
+  }
+}
+
+async function saveTabPalette() {
+  if (!tabPaletteAuthenticated) {
+    toast('Sign in with Google to save a personal palette.', true);
+    return;
+  }
+  el.tabPaletteSave.disabled = true;
+  try {
+    const response = await fetch('/api/tab-palettes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: el.tabPaletteName.value, colors: settings.tabSyntaxColors }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
+    await loadTabPalettes();
+    el.tabPalettePreset.value = result.palette.name;
+    el.tabPaletteName.value = result.palette.name;
+    el.tabPaletteDelete.disabled = false;
+    toast(`Saved palette: ${result.palette.name}`);
+  } catch (error) {
+    toast(error?.message ?? String(error), true);
+  } finally {
+    el.tabPaletteSave.disabled = !tabPaletteAuthenticated;
+  }
+}
+
+async function deleteTabPalette() {
+  const palette = tabPalettePresets[el.tabPalettePreset.value];
+  if (!tabPaletteAuthenticated || !palette) return;
+  try {
+    const response = await fetch('/api/tab-palettes', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: palette.name }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Server returned ${response.status}`);
+    await loadTabPalettes();
+    el.tabPaletteName.value = '';
+    toast(`Deleted ${result.deletedCount} palette.`);
+  } catch (error) {
+    toast(error?.message ?? String(error), true);
+  }
+}
 
 function populateScalePresetOptions(selectedName = '') {
   const rootNote = el.scaleRoot.selectedOptions[0]?.textContent.trim();
@@ -1501,7 +1716,7 @@ function setScaleWithTab(enabled) {
   if (scorePlaying && lastBeat) {
     const groups = currentGroups(lastBeat);
     fretboard.setGroups(groups);
-    if (guitar.status === 'connected') guitar.sendSegment([...overlayLedGroups(), ...groups]);
+    if (guitar.status === 'connected') guitar.sendSegment(prioritizeGroups([...overlayLedGroups(), ...groups]));
   } else {
     clearLeds();
   }
@@ -1625,6 +1840,7 @@ on(el.googleLogout, 'click', async () => {
     });
     if (!response.ok) throw new Error(`Server returned ${response.status}`);
     await loadScalePresets();
+    await loadTabPalettes();
     await loadTuningPresets();
     toast('Signed out.');
   } catch (error) {
@@ -2940,7 +3156,7 @@ async function loadFile(file) {
   busy(`Loading ${file.name}…`);
   try {
     const buf = new Uint8Array(await file.arrayBuffer());
-    const ok = api.load(buf, [0]);
+    const ok = api.load(buf);
     if (!ok) {
       busy(null);
       toast(`Unsupported file format: ${file.name}`, true);
@@ -2957,7 +3173,7 @@ async function loadDemo() {
     const res = await fetch('sample/demo.gp');
     if (!res.ok) throw new Error(`Could not find sample/demo.gp (${res.status})`);
     const buf = new Uint8Array(await res.arrayBuffer());
-    if (!api.load(buf, [0])) throw new Error('Could not parse the demo score.');
+    if (!api.load(buf)) throw new Error('Could not parse the demo score.');
   } catch (err) {
     busy(null);
     toast(err?.message ?? String(err), true);
@@ -3712,7 +3928,25 @@ on(el.scaleNoteColor, 'input', () => {
   if (scaleActive) sendScale();
   refreshScaleWithTabDisplay();
 });
+on(el.toggleTabSyntaxColors, 'change', () => {
+  settings.showTabSyntaxColors = el.toggleTabSyntaxColors.checked;
+  save();
+  refreshTabLedColors();
+});
+on(el.tabPalettePreset, 'change', () => {
+  const palette = tabPalettePresets[el.tabPalettePreset.value];
+  if (!palette) {
+    el.tabPaletteDelete.disabled = true;
+    return;
+  }
+  applyTabPalette(palette.colors);
+  el.tabPaletteName.value = palette.name;
+  el.tabPaletteDelete.disabled = false;
+});
+on(el.tabPaletteSave, 'click', saveTabPalette);
+on(el.tabPaletteDelete, 'click', deleteTabPalette);
 loadScalePresets();
+loadTabPalettes();
 setChordTuning(settings.tuning);
 buildTuningSelects();
 syncTuningUi();
@@ -3777,6 +4011,8 @@ function applySettingsToUi() {
   if (el.colorPaint) el.colorPaint.value = settings.colorPaint;
   el.scaleRootColor.value = settings.colorScaleRoot;
   el.scaleNoteColor.value = settings.colorScaleNote;
+  el.toggleTabSyntaxColors.checked = settings.showTabSyntaxColors;
+  buildTabSyntaxPalette();
   el.toggleScaleWithTab.checked = settings.showScaleWithTab;
   el.tabChordBtn.disabled = settings.showScaleWithTab;
   el.toggleNext.checked = settings.showNext;

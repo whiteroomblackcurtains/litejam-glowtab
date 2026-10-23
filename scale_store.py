@@ -50,6 +50,8 @@ DEFAULT_TUNINGS = (
     ('Half Step Down', (63, 58, 54, 49, 44, 39)),
     ('DADGAD', (62, 57, 55, 50, 45, 38)),
 )
+TAB_SYNTAX_COLOR_KEY = re.compile(r'^[A-Za-z][A-Za-z0-9]*$')
+HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 SESSION_TTL = 30 * 24 * 60 * 60
 OAUTH_STATE_TTL = 10 * 60
 
@@ -99,6 +101,17 @@ def init_db():
                 ON tunings(owner_id, name COLLATE NOCASE) WHERE owner_id IS NOT NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS default_tuning_name
                 ON tunings(name COLLATE NOCASE) WHERE is_default = 1;
+            CREATE TABLE IF NOT EXISTS tab_palettes (
+                id INTEGER PRIMARY KEY,
+                owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                colors TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(owner_id, name)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS tab_palette_name_per_user
+                ON tab_palettes(owner_id, name COLLATE NOCASE);
             CREATE TABLE IF NOT EXISTS sessions (
                 token_hash TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -296,6 +309,77 @@ def save_tuning(user_id, name, notes):
                 (user_id, name, joined, int(time.time())),
             )
     return {'name': name, 'notes': notes, 'isDefault': False}
+
+
+def validate_tab_palette(name, colors):
+    name = (name or '').strip()
+    if not name or len(name) > 60:
+        raise ValueError('Palette name must be between 1 and 60 characters.')
+    if not isinstance(colors, dict) or not colors:
+        raise ValueError('Palette colors must be an object.')
+    normalized = {}
+    for key, color in colors.items():
+        if not isinstance(key, str) or not TAB_SYNTAX_COLOR_KEY.fullmatch(key):
+            raise ValueError('Palette contains an invalid color name.')
+        if not isinstance(color, str) or not HEX_COLOR.fullmatch(color):
+            raise ValueError('Palette colors must be six-digit hex values.')
+        normalized[key] = color.lower()
+    return name, normalized
+
+
+def _tab_palette_row(row):
+    return {
+        'name': row['name'],
+        'colors': json.loads(row['colors']),
+        'isDefault': False,
+    }
+
+
+def list_tab_palettes(user_id=None):
+    if user_id is None:
+        return []
+    with connect() as db:
+        rows = db.execute(
+            'SELECT name, colors FROM tab_palettes WHERE owner_id = ? ORDER BY name COLLATE NOCASE',
+            (user_id,),
+        ).fetchall()
+    return [_tab_palette_row(row) for row in rows]
+
+
+def save_tab_palette(user_id, name, colors):
+    name, colors = validate_tab_palette(name, colors)
+    encoded = json.dumps(colors, sort_keys=True, separators=(',', ':'))
+    now = int(time.time())
+    with connect() as db:
+        existing = db.execute(
+            'SELECT id FROM tab_palettes WHERE owner_id = ? AND name = ? COLLATE NOCASE',
+            (user_id, name),
+        ).fetchone()
+        if existing:
+            db.execute(
+                'UPDATE tab_palettes SET name = ?, colors = ?, updated_at = ? WHERE id = ?',
+                (name, encoded, now, existing['id']),
+            )
+        else:
+            db.execute(
+                'INSERT INTO tab_palettes (owner_id, name, colors, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+                (user_id, name, encoded, now, now),
+            )
+    return {'name': name, 'colors': colors, 'isDefault': False}
+
+
+def delete_tab_palette(user_id, name):
+    name = (name or '').strip()
+    if not name:
+        raise ValueError('Choose a saved palette to delete.')
+    with connect() as db:
+        cursor = db.execute(
+            'DELETE FROM tab_palettes WHERE owner_id = ? AND name = ? COLLATE NOCASE',
+            (user_id, name),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError('Only a saved personal palette can be deleted.')
+        return cursor.rowcount
 
 
 def _token_hash(token):

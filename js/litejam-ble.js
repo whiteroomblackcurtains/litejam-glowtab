@@ -93,6 +93,27 @@ export function packNotes(notes) {
     .map((fret) => ({ fret, strings: byFret.get(fret).sort((a, b) => a - b) }));
 }
 
+/** Keep the last group's color when groups target the same fret and string. */
+export function prioritizeGroups(groups) {
+  const claimed = new Set();
+  const kept = [];
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const group = groups[i];
+    const notes = [];
+    for (const led of group.leds ?? []) {
+      for (const string of led.strings ?? []) {
+        const key = `${string}:${led.fret}`;
+        if (!claimed.has(key)) {
+          claimed.add(key);
+          notes.push({ string, fret: led.fret });
+        }
+      }
+    }
+    if (notes.length) kept.unshift({ ...group, leds: packNotes(notes) });
+  }
+  return kept;
+}
+
 export class LiteJam extends EventTarget {
   constructor() {
     super();

@@ -8,8 +8,12 @@ from scale_store import (
     ROOT_NOTES,
     SCALE_PATTERNS,
     delete_scale,
+    delete_tab_palette,
+    list_tab_palettes,
     save_scales,
+    save_tab_palette,
     validate_scale,
+    validate_tab_palette,
 )
 
 
@@ -52,6 +56,41 @@ class DefaultScaleTests(unittest.TestCase):
             validate_scale('Seven Note', 'C', '2,4,5,7,9,11')[2],
             '2,4,5,7,9,11',
         )
+
+    def test_tab_palette_validation_normalizes_colors(self):
+        self.assertEqual(
+            validate_tab_palette('Neon', {'dead': '#AABBCC'}),
+            ('Neon', {'dead': '#aabbcc'}),
+        )
+        with self.assertRaisesRegex(ValueError, 'six-digit'):
+            validate_tab_palette('Bad', {'dead': 'red'})
+
+    def test_tab_palettes_are_saved_per_user_and_updated_by_name(self):
+        original_path = scale_store.DB_PATH
+        try:
+            with TemporaryDirectory() as directory:
+                scale_store.DB_PATH = Path(directory) / 'scales.sqlite3'
+                scale_store.init_db()
+                with scale_store.connect() as db:
+                    first_user = db.execute(
+                        'INSERT INTO users (google_sub, email, created_at) VALUES (?, ?, ?)',
+                        ('first-user', 'first@example.com', 1),
+                    ).lastrowid
+                    second_user = db.execute(
+                        'INSERT INTO users (google_sub, email, created_at) VALUES (?, ?, ?)',
+                        ('second-user', 'second@example.com', 1),
+                    ).lastrowid
+
+                saved = save_tab_palette(first_user, 'Neon', {'dead': '#AABBCC'})
+                self.assertEqual(saved['colors'], {'dead': '#aabbcc'})
+                self.assertEqual(list_tab_palettes(second_user), [])
+                updated = save_tab_palette(first_user, 'neon', {'dead': '#112233'})
+                self.assertEqual(updated['colors'], {'dead': '#112233'})
+                self.assertEqual(list_tab_palettes(first_user)[0]['name'], 'neon')
+                self.assertEqual(delete_tab_palette(first_user, 'NEON'), 1)
+                self.assertEqual(list_tab_palettes(first_user), [])
+        finally:
+            scale_store.DB_PATH = original_path
 
     def test_database_seeds_all_builtin_scales_without_sign_in(self):
         original_path = scale_store.DB_PATH
